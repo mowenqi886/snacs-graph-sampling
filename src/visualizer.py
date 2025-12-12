@@ -153,8 +153,11 @@ def plot_property_heatmap(results_df: pd.DataFrame,
     df = results_df[results_df['ratio'] == ratio].copy()
     
     # Properties to display
-    properties = ['in_degree', 'out_degree', 'wcc', 'scc', 
-                  'hop_plot', 'singular_val', 'singular_vec', 'clustering']
+    properties = [
+        "in_degree", "out_degree", "wcc", "scc",
+        "hop_plot", "hop_plot_wcc",
+        "singular_val", "singular_vec", "clustering"
+    ]
     
     # Get unique methods and compute mean per method
     methods = df['method'].unique()

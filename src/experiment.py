@@ -518,7 +518,7 @@ def main():
     if args.quick:
         # Quick test configuration
         config = ExperimentConfig(
-            datasets=["astro-ph"] if args.dataset is None else [args.dataset],
+            datasets=["cit-HepTh"] if args.dataset is None else [args.dataset],
             sampling_ratios=[0.15],
             num_runs=3,
             baseline_methods=["RN", "RW", "FF"],

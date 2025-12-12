@@ -47,7 +47,7 @@ def run_quick_test(args):
     from src.experiment import generate_summary_table, compare_baseline_vs_hybrid
     
     config = ExperimentConfig(
-        datasets=["astro-ph"],
+        datasets=["cit-HepTh"],
         sampling_ratios=[0.15],
         num_runs=3,
         baseline_methods=["RN", "RW", "FF"],
@@ -210,7 +210,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py --quick                    Quick test on astro-ph
+  python main.py --quick                    Quick test on cit-HepTh
   python main.py --full                     Full experiment on all datasets
   python main.py --dataset hep-th           Test single dataset
   python main.py --temporal                 TRUE back-in-time with temporal data
