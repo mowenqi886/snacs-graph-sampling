@@ -24,43 +24,28 @@ for directory in [DATA_DIR, RESULTS_DIR, FIGURES_DIR]:
 # =============================================================================
 # Dataset Configuration (Static Snapshots)
 # =============================================================================
+# For Scale-Down we treat the final citation graphs as static snapshots,
+# plus the static Epinions trust network.
 
 DATASETS = {
-    # Collaboration networks (undirected)
-    "hep-th": {
-        "url": "https://snap.stanford.edu/data/ca-HepTh.txt.gz",
-        "filename": "ca-HepTh.txt.gz",
-        "directed": False,
-        "description": "High Energy Physics Theory collaboration network"
+    "cit-HepTh": {
+        "url": "https://snap.stanford.edu/data/cit-HepTh.txt.gz",
+        "filename": "cit-HepTh.txt.gz",
+        "directed": True,
+        "description": "ArXiv HEP-TH citation network (final snapshot, directed)",
     },
-    "hep-ph": {
-        "url": "https://snap.stanford.edu/data/ca-HepPh.txt.gz",
-        "filename": "ca-HepPh.txt.gz",
-        "directed": False,
-        "description": "High Energy Physics Phenomenology collaboration network"
+    "cit-HepPh": {
+        "url": "https://snap.stanford.edu/data/cit-HepPh.txt.gz",
+        "filename": "cit-HepPh.txt.gz",
+        "directed": True,
+        "description": "ArXiv HEP-PH citation network (final snapshot, directed)",
     },
-    "astro-ph": {
-        "url": "https://snap.stanford.edu/data/ca-AstroPh.txt.gz",
-        "filename": "ca-AstroPh.txt.gz",
-        "directed": False,
-        "description": "Astrophysics collaboration network"
-    },
-    
-    # Autonomous systems (undirected)
-    "as": {
-        "url": "https://snap.stanford.edu/data/as-733.tar.gz",
-        "filename": "as-733.tar.gz",
-        "directed": False,
-        "description": "Autonomous Systems network"
-    },
-    
-    # Trust network (directed)
     "epinions": {
         "url": "https://snap.stanford.edu/data/soc-Epinions1.txt.gz",
         "filename": "soc-Epinions1.txt.gz",
         "directed": True,
-        "description": "Epinions trust network"
-    }
+        "description": "Epinions who-trusts-whom network (directed, static)",
+    },
 }
 
 
@@ -69,15 +54,14 @@ DATASETS = {
 # =============================================================================
 
 TEMPORAL_DATASETS = {
-    # Citation networks with timestamps
     "cit-HepTh": {
         "edges_url": "https://snap.stanford.edu/data/cit-HepTh.txt.gz",
         "dates_url": "https://snap.stanford.edu/data/cit-HepTh-dates.txt.gz",
         "edges_file": "cit-HepTh.txt.gz",
         "dates_file": "cit-HepTh-dates.txt.gz",
         "directed": True,
-        "description": "ArXiv HEP-TH citation network with timestamps (1993-2003)",
-        "time_range": "January 1993 - April 2003 (124 months)"
+        "description": "ArXiv HEP-TH citation network with timestamps (1993–2003)",
+        "time_range": "January 1993 – April 2003 (124 months)",
     },
     "cit-HepPh": {
         "edges_url": "https://snap.stanford.edu/data/cit-HepPh.txt.gz",
@@ -85,9 +69,9 @@ TEMPORAL_DATASETS = {
         "edges_file": "cit-HepPh.txt.gz",
         "dates_file": "cit-HepPh-dates.txt.gz",
         "directed": True,
-        "description": "ArXiv HEP-PH citation network with timestamps (1993-2003)",
-        "time_range": "January 1993 - April 2003 (124 months)"
-    }
+        "description": "ArXiv HEP-PH citation network with timestamps (1993–2003)",
+        "time_range": "January 1993 – April 2003 (124 months)",
+    },
 }
 
 
