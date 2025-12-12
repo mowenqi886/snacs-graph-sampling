@@ -1,17 +1,18 @@
+
 import os
 import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import networkx as nx
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import (
-    FIGURES_DIR, FIGURE_DPI, FIGURE_FORMAT, METHOD_COLORS,
+    FIGURES_DIR, FIGURE_DPI, FIGURE_FORMAT, FIGURE_SIZE, METHOD_COLORS,
     BASELINE_METHODS, HYBRID_COMBINATIONS
 )
 
@@ -21,7 +22,7 @@ sns.set_palette("husl")
 
 
 # =============================================================================
-# D-Statistic Curves
+# D-Statistic Curves (Similar to Figure 3 in original paper)
 # =============================================================================
 
 def plot_d_statistic_vs_ratio(results_df: pd.DataFrame,
@@ -126,13 +127,13 @@ def plot_d_statistic_vs_ratio(results_df: pd.DataFrame,
     
     if save_path:
         plt.savefig(save_path, dpi=FIGURE_DPI, bbox_inches='tight')
-        print(f"Figure saved to: {save_path}")
+        print(f"  Figure saved to: {save_path}")
     
     return fig
 
 
 # =============================================================================
-# Property Heatmap
+# Property Heatmap (Similar to Table 1 in original paper)
 # =============================================================================
 
 def plot_property_heatmap(results_df: pd.DataFrame,
@@ -152,12 +153,15 @@ def plot_property_heatmap(results_df: pd.DataFrame,
     # Filter by ratio
     df = results_df[results_df['ratio'] == ratio].copy()
     
-    # Properties to display
+    # Properties to display (S1-S9)
     properties = [
         "in_degree", "out_degree", "wcc", "scc",
         "hop_plot", "hop_plot_wcc",
         "singular_val", "singular_vec", "clustering"
     ]
+    
+    # Filter to existing columns
+    properties = [p for p in properties if p in df.columns]
     
     # Get unique methods and compute mean per method
     methods = df['method'].unique()
@@ -195,107 +199,20 @@ def plot_property_heatmap(results_df: pd.DataFrame,
     
     ax.set_title(f'D-Statistics by Method and Property (Ratio = {ratio*100:.0f}%)', 
                  fontsize=14)
-    ax.set_xlabel('Graph Property', fontsize=12)
+    ax.set_xlabel('Graph Property (S1-S9)', fontsize=12)
     ax.set_ylabel('Sampling Method', fontsize=12)
     
     plt.tight_layout()
     
     if save_path:
         plt.savefig(save_path, dpi=FIGURE_DPI, bbox_inches='tight')
-        print(f"Figure saved to: {save_path}")
+        print(f"  Figure saved to: {save_path}")
     
     return fig
 
 
 # =============================================================================
-# Distribution Comparison
-# =============================================================================
-
-def plot_distribution_comparison(G: nx.Graph,
-                                  samples: Dict[str, nx.Graph],
-                                  property_name: str = "degree",
-                                  save_path: Optional[str] = None) -> plt.Figure:
-    """
-    Compare distributions between original graph and samples.
-    Similar to Figures 1, 2 in original paper.
-    
-    Args:
-        G: Original graph
-        samples: Dictionary mapping method names to sampled graphs
-        property_name: Property to compare ("degree", "clustering")
-        save_path: Path to save figure
-    
-    Returns:
-        Matplotlib figure
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    
-    # ===== Left plot: Degree distribution =====
-    ax1 = axes[0]
-    
-    # Original graph
-    if G.is_directed():
-        degrees_orig = [d for n, d in G.in_degree()]
-    else:
-        degrees_orig = [d for n, d in G.degree()]
-    
-    # Plot original
-    ax1.hist(degrees_orig, bins=50, alpha=0.5, label='Original', 
-             density=True, color='black')
-    
-    # Plot samples
-    colors = plt.cm.tab10(np.linspace(0, 1, len(samples)))
-    for (name, S), color in zip(samples.items(), colors):
-        if S.is_directed():
-            degrees = [d for n, d in S.in_degree()]
-        else:
-            degrees = [d for n, d in S.degree()]
-        
-        ax1.hist(degrees, bins=50, alpha=0.3, label=name,
-                 density=True, color=color)
-    
-    ax1.set_xscale('log')
-    ax1.set_yscale('log')
-    ax1.set_xlabel('Degree', fontsize=12)
-    ax1.set_ylabel('Frequency (log)', fontsize=12)
-    ax1.set_title('Degree Distribution Comparison', fontsize=14)
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    
-    # ===== Right plot: Clustering coefficient =====
-    ax2 = axes[1]
-    
-    # Convert to undirected for clustering
-    G_und = G.to_undirected() if G.is_directed() else G
-    clustering_orig = list(nx.clustering(G_und).values())
-    
-    ax2.hist(clustering_orig, bins=50, alpha=0.5, label='Original',
-             density=True, color='black')
-    
-    for (name, S), color in zip(samples.items(), colors):
-        S_und = S.to_undirected() if S.is_directed() else S
-        clustering = list(nx.clustering(S_und).values())
-        
-        ax2.hist(clustering, bins=50, alpha=0.3, label=name,
-                 density=True, color=color)
-    
-    ax2.set_xlabel('Clustering Coefficient', fontsize=12)
-    ax2.set_ylabel('Frequency', fontsize=12)
-    ax2.set_title('Clustering Coefficient Distribution', fontsize=14)
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    
-    if save_path:
-        plt.savefig(save_path, dpi=FIGURE_DPI, bbox_inches='tight')
-        print(f"Figure saved to: {save_path}")
-    
-    return fig
-
-
-# =============================================================================
-# Summary Bar Chart
+# Method Comparison Bar Chart
 # =============================================================================
 
 def plot_method_comparison_bars(results_df: pd.DataFrame,
@@ -303,7 +220,7 @@ def plot_method_comparison_bars(results_df: pd.DataFrame,
                                  top_n: int = 10,
                                  save_path: Optional[str] = None) -> plt.Figure:
     """
-    Create bar chart comparing methods by average D-statistic.
+    Bar chart comparing methods by average D-statistic.
     
     Args:
         results_df: DataFrame with results
@@ -314,60 +231,44 @@ def plot_method_comparison_bars(results_df: pd.DataFrame,
     Returns:
         Matplotlib figure
     """
-    # Filter and aggregate
+    # Filter by ratio
     df = results_df[results_df['ratio'] == ratio].copy()
+    
+    # Compute mean AVG per method
     method_avg = df.groupby('method')['AVG'].mean().sort_values()
     
-    # Take top N (best methods)
-    top_methods = method_avg.head(top_n)
+    # Take top N
+    method_avg = method_avg.head(top_n)
     
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Color by method type
-    colors = []
-    for method in top_methods.index:
-        if 'HYB' in method:
-            colors.append('#2ecc71')  # Green for hybrid
-        elif method in ['RW', 'FF', 'RJ']:
-            colors.append('#3498db')  # Blue for exploration
-        else:
-            colors.append('#e74c3c')  # Red for node selection
+    colors = [METHOD_COLORS.get(m.split('(')[0], '#1f77b4') for m in method_avg.index]
     
-    bars = ax.barh(range(len(top_methods)), top_methods.values, color=colors)
+    bars = ax.barh(method_avg.index, method_avg.values, color=colors)
     
     # Add value labels
-    for bar, value in zip(bars, top_methods.values):
-        ax.text(value + 0.01, bar.get_y() + bar.get_height()/2,
-                f'{value:.3f}', va='center', fontsize=10)
+    for bar, val in zip(bars, method_avg.values):
+        ax.text(val + 0.01, bar.get_y() + bar.get_height()/2, 
+                f'{val:.3f}', va='center', fontsize=10)
     
-    ax.set_yticks(range(len(top_methods)))
-    ax.set_yticklabels(top_methods.index)
     ax.set_xlabel('Average D-Statistic (lower is better)', fontsize=12)
-    ax.set_title(f'Top {top_n} Methods by Performance (Ratio = {ratio*100:.0f}%)',
-                 fontsize=14)
-    ax.set_xlim(0, max(top_methods.values) * 1.2)
-    
-    # Add legend
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor='#2ecc71', label='Hybrid'),
-        Patch(facecolor='#3498db', label='Exploration'),
-        Patch(facecolor='#e74c3c', label='Node Selection')
-    ]
-    ax.legend(handles=legend_elements, loc='lower right')
+    ax.set_ylabel('Sampling Method', fontsize=12)
+    ax.set_title(f'Top {top_n} Methods at {ratio*100:.0f}% Sampling Ratio', fontsize=14)
+    ax.set_xlim(0, max(method_avg.values) * 1.2)
+    ax.grid(True, alpha=0.3, axis='x')
     
     plt.tight_layout()
     
     if save_path:
         plt.savefig(save_path, dpi=FIGURE_DPI, bbox_inches='tight')
-        print(f"Figure saved to: {save_path}")
+        print(f"  Figure saved to: {save_path}")
     
     return fig
 
 
 # =============================================================================
-# Alpha Parameter Analysis
+# Alpha Parameter Analysis (for Hybrid Methods)
 # =============================================================================
 
 def plot_alpha_analysis(results_df: pd.DataFrame,
@@ -378,7 +279,7 @@ def plot_alpha_analysis(results_df: pd.DataFrame,
     
     Args:
         results_df: DataFrame with results
-        hybrid_method: Base name of hybrid method to analyze
+        hybrid_method: Base hybrid method name (e.g., "HYB-RN-RW")
         save_path: Path to save figure
     
     Returns:
@@ -396,7 +297,7 @@ def plot_alpha_analysis(results_df: pd.DataFrame,
     # ===== Left: Alpha vs D-statistic for different ratios =====
     ax1 = axes[0]
     
-    for ratio in df['ratio'].unique():
+    for ratio in sorted(df['ratio'].unique()):
         ratio_data = df[df['ratio'] == ratio]
         alpha_perf = ratio_data.groupby('alpha')['AVG'].mean()
         
@@ -404,7 +305,7 @@ def plot_alpha_analysis(results_df: pd.DataFrame,
                  'o-', label=f'Ratio={ratio*100:.0f}%',
                  linewidth=2, markersize=8)
     
-    ax1.set_xlabel('Alpha (α)', fontsize=12)
+    ax1.set_xlabel('Alpha (α) - Fraction from Node Selection', fontsize=12)
     ax1.set_ylabel('Average D-Statistic', fontsize=12)
     ax1.set_title(f'{hybrid_method}: Effect of α on Performance', fontsize=14)
     ax1.legend()
@@ -414,6 +315,7 @@ def plot_alpha_analysis(results_df: pd.DataFrame,
     ax2 = axes[1]
     
     properties = ['in_degree', 'clustering', 'hop_plot', 'singular_val']
+    properties = [p for p in properties if p in df.columns]
     
     for prop in properties:
         alpha_perf = df.groupby('alpha')[prop].mean()
@@ -430,66 +332,189 @@ def plot_alpha_analysis(results_df: pd.DataFrame,
     
     if save_path:
         plt.savefig(save_path, dpi=FIGURE_DPI, bbox_inches='tight')
-        print(f"Figure saved to: {save_path}")
+        print(f"  Figure saved to: {save_path}")
     
     return fig
 
 
 # =============================================================================
-# Dataset Comparison
+# NEW: Temporal Metrics Visualization (T1-T5)
 # =============================================================================
 
-def plot_dataset_comparison(results_df: pd.DataFrame,
-                             method: str = "RW",
-                             save_path: Optional[str] = None) -> plt.Figure:
+def plot_temporal_metrics_comparison(original_metrics: Dict[str, np.ndarray],
+                                      sampled_metrics: Dict[str, np.ndarray],
+                                      method_name: str = "Sample",
+                                      save_path: Optional[str] = None) -> plt.Figure:
     """
-    Compare method performance across different datasets.
+    Plot T1-T5 temporal metrics comparison between original and sampled graphs.
+    Similar to Figure 2 in the original paper.
     
     Args:
-        results_df: DataFrame with results
-        method: Method to analyze
+        original_metrics: Dict with T1-T5 metrics for original graph
+        sampled_metrics: Dict with T1-T5 metrics for sampled graph
+        method_name: Name of sampling method (for labels)
         save_path: Path to save figure
     
     Returns:
         Matplotlib figure
     """
-    # Filter to specific method
-    df = results_df[results_df['method'] == method].copy()
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     
-    if len(df) == 0:
-        print(f"No data found for method {method}")
-        return None
+    num_snapshots = len(original_metrics.get('T1_dpl', []))
+    x = range(num_snapshots)
+    x_labels = [f'Snap_{i+1}' for i in x]
     
-    # Properties to show
-    properties = ['in_degree', 'out_degree', 'wcc', 'scc', 
-                  'hop_plot', 'clustering', 'AVG']
-    
-    # Create grouped bar chart
-    datasets = df['dataset'].unique()
-    x = np.arange(len(properties))
-    width = 0.8 / len(datasets)
-    
-    fig, ax = plt.subplots(figsize=(14, 6))
-    
-    for i, dataset in enumerate(datasets):
-        dataset_data = df[df['dataset'] == dataset][properties].mean()
-        offset = (i - len(datasets)/2 + 0.5) * width
-        
-        ax.bar(x + offset, dataset_data.values, width, label=dataset)
-    
-    ax.set_xlabel('Property', fontsize=12)
-    ax.set_ylabel('D-Statistic', fontsize=12)
-    ax.set_title(f'{method}: Performance Across Datasets', fontsize=14)
-    ax.set_xticks(x)
-    ax.set_xticklabels(properties, rotation=45, ha='right')
+    # T1: Densification Power Law
+    ax = axes[0, 0]
+    if 'T1_nodes' in original_metrics and 'T1_edges' in original_metrics:
+        ax.loglog(original_metrics['T1_nodes'], original_metrics['T1_edges'], 
+                  'b-o', label='Original', markersize=8, linewidth=2)
+        if 'T1_nodes' in sampled_metrics and 'T1_edges' in sampled_metrics:
+            ax.loglog(sampled_metrics['T1_nodes'], sampled_metrics['T1_edges'], 
+                      'r--s', label=method_name, markersize=6, linewidth=2)
+    ax.set_xlabel('Number of Nodes')
+    ax.set_ylabel('Number of Edges')
+    orig_exp = original_metrics.get('T1_exponent', 0)
+    samp_exp = sampled_metrics.get('T1_exponent', 0)
+    ax.set_title(f'T1: DPL (a_orig={orig_exp:.2f}, a_samp={samp_exp:.2f})')
     ax.legend()
-    ax.grid(True, alpha=0.3, axis='y')
+    ax.grid(True, alpha=0.3)
+    
+    # T2: Diameter Over Time
+    ax = axes[0, 1]
+    if 'T2_diameter' in original_metrics:
+        ax.plot(x, original_metrics['T2_diameter'], 'b-o', label='Original', 
+                markersize=8, linewidth=2)
+        if 'T2_diameter' in sampled_metrics:
+            ax.plot(x, sampled_metrics['T2_diameter'], 'r--s', label=method_name,
+                    markersize=6, linewidth=2)
+    ax.set_xlabel('Time Snapshot')
+    ax.set_ylabel('Effective Diameter')
+    ax.set_title('T2: Diameter Over Time')
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, rotation=45)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # T3: CC Size Over Time
+    ax = axes[0, 2]
+    if 'T3_cc_size' in original_metrics:
+        ax.plot(x, original_metrics['T3_cc_size'], 'b-o', label='Original',
+                markersize=8, linewidth=2)
+        if 'T3_cc_size' in sampled_metrics:
+            ax.plot(x, sampled_metrics['T3_cc_size'], 'r--s', label=method_name,
+                    markersize=6, linewidth=2)
+    ax.set_xlabel('Time Snapshot')
+    ax.set_ylabel('Largest CC Fraction')
+    ax.set_title('T3: CC Size Over Time')
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, rotation=45)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # T4: Singular Value Over Time
+    ax = axes[1, 0]
+    if 'T4_singular' in original_metrics:
+        ax.plot(x, original_metrics['T4_singular'], 'b-o', label='Original',
+                markersize=8, linewidth=2)
+        if 'T4_singular' in sampled_metrics:
+            ax.plot(x, sampled_metrics['T4_singular'], 'r--s', label=method_name,
+                    markersize=6, linewidth=2)
+    ax.set_xlabel('Time Snapshot')
+    ax.set_ylabel('Largest Singular Value')
+    ax.set_title('T4: Singular Value Over Time')
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, rotation=45)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # T5: Clustering Over Time
+    ax = axes[1, 1]
+    if 'T5_clustering' in original_metrics:
+        ax.plot(x, original_metrics['T5_clustering'], 'b-o', label='Original',
+                markersize=8, linewidth=2)
+        if 'T5_clustering' in sampled_metrics:
+            ax.plot(x, sampled_metrics['T5_clustering'], 'r--s', label=method_name,
+                    markersize=6, linewidth=2)
+    ax.set_xlabel('Time Snapshot')
+    ax.set_ylabel('Avg Clustering Coefficient')
+    ax.set_title('T5: Clustering Over Time')
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels, rotation=45)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Summary: KS D-statistics bar chart
+    ax = axes[1, 2]
+    metrics = ['T1', 'T2', 'T3', 'T4', 'T5']
+    # This would need the actual KS statistics - placeholder for now
+    ax.text(0.5, 0.5, 'T1-T5 KS Statistics\n(See Results Table)', 
+            ha='center', va='center', fontsize=12, transform=ax.transAxes)
+    ax.set_title('T1-T5 KS D-Statistics Summary')
+    ax.axis('off')
     
     plt.tight_layout()
     
     if save_path:
         plt.savefig(save_path, dpi=FIGURE_DPI, bbox_inches='tight')
-        print(f"Figure saved to: {save_path}")
+        print(f"  Figure saved to: {save_path}")
+    
+    return fig
+
+
+def plot_temporal_results_heatmap(results_df: pd.DataFrame,
+                                   save_path: Optional[str] = None) -> plt.Figure:
+    """
+    Create heatmap for back-in-time results including T1-T5 metrics.
+    
+    Args:
+        results_df: DataFrame with temporal experiment results
+        save_path: Path to save figure
+    
+    Returns:
+        Matplotlib figure
+    """
+    # Check if this is a temporal results DataFrame
+    temporal_cols = ['T1_dpl', 'T2_diameter', 'T3_cc_size', 'T4_singular', 'T5_clustering', 'T_AVG']
+    available_cols = [c for c in temporal_cols if c in results_df.columns]
+    
+    if not available_cols:
+        print("No temporal metrics found in results DataFrame")
+        return None
+    
+    # Add static average if available
+    if 'S_AVG_ALL' in results_df.columns:
+        available_cols = ['S_AVG_ALL'] + available_cols
+    
+    # Group by method
+    method_data = results_df.groupby('method')[available_cols].mean()
+    
+    # Sort by T_AVG or COMBINED_AVG
+    sort_col = 'T_AVG' if 'T_AVG' in method_data.columns else available_cols[-1]
+    method_data = method_data.sort_values(sort_col)
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, max(6, len(method_data) * 0.5)))
+    
+    sns.heatmap(
+        method_data,
+        annot=True,
+        fmt='.3f',
+        cmap='RdYlGn_r',
+        center=0.5,
+        ax=ax,
+        cbar_kws={'label': 'D-Statistic (lower is better)'}
+    )
+    
+    ax.set_title('Back-in-Time Evaluation: Static (S) and Temporal (T) Metrics', fontsize=14)
+    ax.set_xlabel('Metric', fontsize=12)
+    ax.set_ylabel('Sampling Method', fontsize=12)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=FIGURE_DPI, bbox_inches='tight')
+        print(f"  Figure saved to: {save_path}")
     
     return fig
 
@@ -515,51 +540,65 @@ def generate_all_figures(results_df: pd.DataFrame,
     
     # 1. D-statistic vs ratio curves
     print("\n1. D-statistic vs sampling ratio curves...")
-    plot_d_statistic_vs_ratio(
-        results_df,
-        save_path=os.path.join(output_dir, f"d_statistic_curves.{FIGURE_FORMAT}")
-    )
-    
-    # Per-dataset curves
-    for dataset in results_df['dataset'].unique():
+    try:
         plot_d_statistic_vs_ratio(
-            results_df, dataset=dataset,
-            save_path=os.path.join(output_dir, f"d_statistic_{dataset}.{FIGURE_FORMAT}")
+            results_df,
+            save_path=os.path.join(output_dir, f"d_statistic_curves.{FIGURE_FORMAT}")
         )
+        
+        # Per-dataset curves
+        for dataset in results_df['dataset'].unique():
+            plot_d_statistic_vs_ratio(
+                results_df, dataset=dataset,
+                save_path=os.path.join(output_dir, f"d_statistic_{dataset}.{FIGURE_FORMAT}")
+            )
+    except Exception as e:
+        print(f"  Warning: Could not generate D-statistic curves: {e}")
     
     # 2. Property heatmaps
     print("\n2. Property heatmaps...")
-    for ratio in results_df['ratio'].unique():
-        plot_property_heatmap(
-            results_df, ratio=ratio,
-            save_path=os.path.join(output_dir, f"heatmap_ratio_{int(ratio*100)}.{FIGURE_FORMAT}")
-        )
+    try:
+        for ratio in results_df['ratio'].unique():
+            plot_property_heatmap(
+                results_df, ratio=ratio,
+                save_path=os.path.join(output_dir, f"heatmap_ratio_{int(ratio*100)}.{FIGURE_FORMAT}")
+            )
+    except Exception as e:
+        print(f"  Warning: Could not generate heatmaps: {e}")
     
     # 3. Method comparison bars
     print("\n3. Method comparison bar charts...")
-    plot_method_comparison_bars(
-        results_df, ratio=0.15,
-        save_path=os.path.join(output_dir, f"method_comparison.{FIGURE_FORMAT}")
-    )
+    try:
+        plot_method_comparison_bars(
+            results_df, ratio=0.15,
+            save_path=os.path.join(output_dir, f"method_comparison.{FIGURE_FORMAT}")
+        )
+    except Exception as e:
+        print(f"  Warning: Could not generate method comparison: {e}")
     
     # 4. Alpha analysis for hybrid methods
     print("\n4. Alpha parameter analysis...")
     hybrid_methods = ["HYB-RN-RW", "HYB-RPN-FF", "HYB-RDN-RW"]
     for hybrid in hybrid_methods:
-        if results_df['method'].str.contains(hybrid).any():
-            plot_alpha_analysis(
-                results_df, hybrid_method=hybrid,
-                save_path=os.path.join(output_dir, f"alpha_{hybrid}.{FIGURE_FORMAT}")
-            )
+        try:
+            if results_df['method'].str.contains(hybrid).any():
+                plot_alpha_analysis(
+                    results_df, hybrid_method=hybrid,
+                    save_path=os.path.join(output_dir, f"alpha_{hybrid}.{FIGURE_FORMAT}")
+                )
+        except Exception as e:
+            print(f"  Warning: Could not generate alpha analysis for {hybrid}: {e}")
     
-    # 5. Dataset comparison
-    print("\n5. Dataset comparison...")
-    for method in ['RW', 'FF']:
-        if method in results_df['method'].values:
-            plot_dataset_comparison(
-                results_df, method=method,
-                save_path=os.path.join(output_dir, f"dataset_comparison_{method}.{FIGURE_FORMAT}")
+    # 5. Temporal metrics heatmap (if available)
+    print("\n5. Temporal metrics visualization...")
+    try:
+        if 'T_AVG' in results_df.columns or 'T1_dpl' in results_df.columns:
+            plot_temporal_results_heatmap(
+                results_df,
+                save_path=os.path.join(output_dir, f"temporal_heatmap.{FIGURE_FORMAT}")
             )
+    except Exception as e:
+        print(f"  Warning: Could not generate temporal heatmap: {e}")
     
     print(f"\n✓ All figures saved to: {output_dir}")
 
@@ -568,10 +607,7 @@ def generate_all_figures(results_df: pd.DataFrame,
 # Demo
 # =============================================================================
 
-def demo_visualizer():
-    """
-    Demonstrate visualization module with synthetic data.
-    """
+if __name__ == "__main__":
     print("="*70)
     print("VISUALIZATION MODULE DEMO")
     print("="*70)
@@ -593,7 +629,7 @@ def demo_visualizer():
                 
                 # Generate synthetic D-statistics
                 base = 0.3 if 'HYB' in method or method in ['RW', 'FF'] else 0.5
-                noise = np.random.uniform(-0.1, 0.1, 8)
+                noise = np.random.uniform(-0.1, 0.1, 9)
                 
                 data.append({
                     'dataset': dataset,
@@ -606,9 +642,10 @@ def demo_visualizer():
                     'wcc': base + 0.3 + noise[2],
                     'scc': base + 0.2 + noise[3],
                     'hop_plot': base + noise[4],
-                    'singular_vec': base - 0.1 + noise[5],
-                    'singular_val': base - 0.1 + noise[6],
-                    'clustering': base + noise[7],
+                    'hop_plot_wcc': base + noise[5],
+                    'singular_vec': base - 0.1 + noise[6],
+                    'singular_val': base - 0.1 + noise[7],
+                    'clustering': base + noise[8],
                     'AVG': base + np.mean(noise)
                 })
     
@@ -618,8 +655,4 @@ def demo_visualizer():
     print("\nGenerating demo figures...")
     generate_all_figures(results_df, output_dir=FIGURES_DIR)
     
-    print("\nDemo completed successfully!")
-
-
-if __name__ == "__main__":
-    demo_visualizer()
+    print("\n✓ Demo completed successfully!")

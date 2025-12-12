@@ -1,15 +1,17 @@
+
 import os
 import gzip
 import numpy as np
 import networkx as nx
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
-from collections import defaultdict
+from typing import Dict, List, Tuple, Optional, Union
+from collections import defaultdict, OrderedDict
 import urllib.request
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import DATA_DIR
+
+from config import DATA_DIR, NUM_TIME_SNAPSHOTS, TIME_SNAPSHOT_METHOD
 
 
 # =============================================================================
@@ -71,11 +73,11 @@ class TemporalGraphLoader:
         filepath = os.path.join(self.data_dir, filename)
         
         if not os.path.exists(filepath):
-            print(f"Downloading {filename}...")
+            print(f"  Downloading {filename}...")
             urllib.request.urlretrieve(url, filepath)
-            print(f"  Saved to {filepath}")
+            print(f"    Saved to {filepath}")
         else:
-            print(f"File already exists: {filepath}")
+            print(f"  File already exists: {filepath}")
         
         return filepath
     
@@ -112,7 +114,6 @@ class TemporalGraphLoader:
                         try:
                             dt = datetime.strptime(date_str, "%Y-%m-%d")
                         except ValueError:
-                            # Try alternative format
                             try:
                                 dt = datetime.strptime(date_str, "%Y/%m/%d")
                             except ValueError:
@@ -123,7 +124,7 @@ class TemporalGraphLoader:
                     except (ValueError, IndexError):
                         continue
         
-        print(f"  Loaded timestamps for {len(node_times)} nodes")
+        print(f"    Loaded timestamps for {len(node_times)} nodes")
         return node_times
     
     def _parse_edges_file(self, edges_filepath: str) -> List[Tuple[int, int]]:
@@ -157,7 +158,7 @@ class TemporalGraphLoader:
                     except ValueError:
                         continue
         
-        print(f"  Loaded {len(edges)} edges")
+        print(f"    Loaded {len(edges)} edges")
         return edges
     
     def load(self) -> Tuple[nx.Graph, Dict[int, datetime]]:
@@ -182,14 +183,14 @@ class TemporalGraphLoader:
         )
         
         # Parse files
-        print("Parsing edges...")
+        print("  Parsing edges...")
         edges = self._parse_edges_file(edges_path)
         
-        print("Parsing timestamps...")
+        print("  Parsing timestamps...")
         node_times = self._parse_dates_file(dates_path)
         
         # Create graph
-        print("Building graph...")
+        print("  Building graph...")
         if self.dataset_info["directed"]:
             G = nx.DiGraph()
         else:
@@ -202,39 +203,43 @@ class TemporalGraphLoader:
             if G.has_node(node):
                 G.nodes[node]['timestamp'] = dt
         
-        print(f"\nLoaded graph:")
-        print(f"  Nodes: {G.number_of_nodes():,}")
-        print(f"  Edges: {G.number_of_edges():,}")
-        print(f"  Nodes with timestamps: {len(node_times):,}")
+        print(f"\n  Graph loaded:")
+        print(f"    Nodes: {G.number_of_nodes():,}")
+        print(f"    Edges: {G.number_of_edges():,}")
+        print(f"    Nodes with timestamps: {len(node_times):,}")
         
         # Find time range
         if node_times:
             min_time = min(node_times.values())
             max_time = max(node_times.values())
-            print(f"  Time range: {min_time.date()} to {max_time.date()}")
+            print(f"    Time range: {min_time.date()} to {max_time.date()}")
         
         return G, node_times
     
-    def create_time_slices(self, G: nx.Graph, node_times: Dict[int, datetime],
-                           num_slices: int = 5,
-                           slice_method: str = "equal_time") -> Dict[str, nx.Graph]:
+    def create_time_snapshots(self, G: nx.Graph, node_times: Dict[int, datetime],
+                              num_snapshots: int = NUM_TIME_SNAPSHOTS,
+                              snapshot_method: str = TIME_SNAPSHOT_METHOD) -> Dict[str, nx.Graph]:
         """
         Create time-sliced snapshots of the graph.
         
-        T1 is the earliest slice, T5 is the latest (full graph).
+        Snapshot_1 is the earliest snapshot (smallest graph).
+        Snapshot_N is the latest snapshot (full graph).
+        
+        IMPORTANT: These are called "Snapshots" (not "T1-T5") to avoid
+        confusion with temporal METRICS T1-T5.
         
         Args:
             G: Full graph
             node_times: Dictionary mapping node_id -> datetime
-            num_slices: Number of time slices (default: 5 for T1-T5)
-            slice_method: How to divide time
+            num_snapshots: Number of time snapshots to create
+            snapshot_method: How to divide time
                 - "equal_time": Equal time intervals
-                - "equal_nodes": Equal number of nodes per slice
+                - "equal_nodes": Equal number of nodes per snapshot
         
         Returns:
-            Dictionary {T1: G1, T2: G2, ..., T5: G5}
+            OrderedDict {"Snapshot_1": G1, "Snapshot_2": G2, ..., "Snapshot_N": GN}
         """
-        print(f"\nCreating {num_slices} time slices...")
+        print(f"\n  Creating {num_snapshots} time snapshots...")
         
         # Get nodes with valid timestamps
         valid_nodes = [(n, t) for n, t in node_times.items() if G.has_node(n)]
@@ -246,53 +251,54 @@ class TemporalGraphLoader:
         min_time = valid_nodes[0][1]
         max_time = valid_nodes[-1][1]
         
-        print(f"  Valid nodes: {len(valid_nodes)}")
-        print(f"  Time range: {min_time.date()} to {max_time.date()}")
+        print(f"    Valid nodes: {len(valid_nodes)}")
+        print(f"    Time range: {min_time.date()} to {max_time.date()}")
         
         # Create time boundaries
-        if slice_method == "equal_time":
+        if snapshot_method == "equal_time":
             # Equal time intervals
             total_seconds = (max_time - min_time).total_seconds()
-            slice_duration = total_seconds / num_slices
+            slice_duration = total_seconds / num_snapshots
             
             boundaries = []
-            for i in range(num_slices + 1):
+            for i in range(num_snapshots + 1):
                 boundary_time = min_time.timestamp() + i * slice_duration
                 boundaries.append(datetime.fromtimestamp(boundary_time))
             
-        elif slice_method == "equal_nodes":
-            # Equal number of nodes per cumulative slice
-            nodes_per_slice = len(valid_nodes) // num_slices
+        elif snapshot_method == "equal_nodes":
+            # Equal number of nodes per cumulative snapshot
+            nodes_per_slice = len(valid_nodes) // num_snapshots
             
             boundaries = [min_time]
-            for i in range(1, num_slices):
+            for i in range(1, num_snapshots):
                 idx = min(i * nodes_per_slice, len(valid_nodes) - 1)
                 boundaries.append(valid_nodes[idx][1])
             boundaries.append(max_time)
         
         else:
-            raise ValueError(f"Unknown slice_method: {slice_method}")
+            raise ValueError(f"Unknown snapshot_method: {snapshot_method}")
         
-        # Create snapshots
-        time_slices = {}
+        # Create snapshots (using OrderedDict to maintain order)
+        time_snapshots = OrderedDict()
         
-        for i in range(num_slices):
-            slice_name = f"T{i+1}"
+        for i in range(num_snapshots):
+            # FIXED: Use "Snapshot_" prefix instead of "T" to avoid confusion
+            snapshot_name = f"Snapshot_{i+1}"
             cutoff_time = boundaries[i + 1]
             
             # Get nodes up to this time
-            slice_nodes = [n for n, t in valid_nodes if t <= cutoff_time]
+            snapshot_nodes = [n for n, t in valid_nodes if t <= cutoff_time]
             
             # Create subgraph with these nodes
-            slice_graph = G.subgraph(slice_nodes).copy()
+            snapshot_graph = G.subgraph(snapshot_nodes).copy()
             
-            time_slices[slice_name] = slice_graph
+            time_snapshots[snapshot_name] = snapshot_graph
             
-            print(f"  {slice_name}: {slice_graph.number_of_nodes():,} nodes, "
-                  f"{slice_graph.number_of_edges():,} edges "
+            print(f"    {snapshot_name}: {snapshot_graph.number_of_nodes():,} nodes, "
+                  f"{snapshot_graph.number_of_edges():,} edges "
                   f"(up to {cutoff_time.date()})")
         
-        return time_slices
+        return time_snapshots
     
     def get_monthly_snapshots(self, G: nx.Graph, node_times: Dict[int, datetime],
                                start_year: int = 1993,
@@ -307,9 +313,9 @@ class TemporalGraphLoader:
             end_year: Ending year
         
         Returns:
-            Dictionary {"YYYY-MM": graph} for each month
+            OrderedDict {"YYYY-MM": graph} for each month
         """
-        print(f"\nCreating monthly snapshots ({start_year}-{end_year})...")
+        print(f"\n  Creating monthly snapshots ({start_year}-{end_year})...")
         
         # Group nodes by month
         monthly_nodes = defaultdict(set)
@@ -321,7 +327,7 @@ class TemporalGraphLoader:
                     monthly_nodes[month_key].add(node)
         
         # Create cumulative snapshots
-        snapshots = {}
+        snapshots = OrderedDict()
         cumulative_nodes = set()
         
         for month_key in sorted(monthly_nodes.keys()):
@@ -329,112 +335,243 @@ class TemporalGraphLoader:
             snapshot = G.subgraph(cumulative_nodes).copy()
             snapshots[month_key] = snapshot
         
-        print(f"  Created {len(snapshots)} monthly snapshots")
+        print(f"    Created {len(snapshots)} monthly snapshots")
         
         return snapshots
 
 
 # =============================================================================
-# Back-in-Time Evaluator
+# Back-in-Time Evaluator (UPDATED with T1-T5 support)
 # =============================================================================
 
 class BackInTimeEvaluator:
     """
     Evaluator for back-in-time sampling goal.
     
-    Tests whether a sample from G(T5) can represent properties of
-    earlier snapshots G(T1), G(T2), G(T3), G(T4).
+    Tests whether a sample from the final graph can represent properties of
+    earlier snapshots, using both:
+    - Static metrics (S1-S9): Measured on each snapshot
+    - Temporal metrics (T1-T5): Measured across all snapshots
+    
+    Usage:
+        evaluator = BackInTimeEvaluator(time_snapshots)
+        results = evaluator.evaluate_sample(sampled_graph, sampled_snapshots)
     """
     
-    def __init__(self, time_slices: Dict[str, nx.Graph],
+    def __init__(self, time_snapshots: Dict[str, nx.Graph],
                  use_log_transform: bool = True):
         """
         Initialize back-in-time evaluator.
         
         Args:
-            time_slices: Dictionary {T1: G1, T2: G2, ..., T5: G5}
+            time_snapshots: OrderedDict {Snapshot_1: G1, ..., Snapshot_N: GN}
             use_log_transform: Whether to use log-transform for KS tests
         """
-        self.time_slices = time_slices
+        self.time_snapshots = OrderedDict(sorted(time_snapshots.items()))
         self.use_log_transform = use_log_transform
+        self.num_snapshots = len(time_snapshots)
         
-        # Import evaluator
+        # Get the final snapshot name (largest graph)
+        self.final_snapshot_name = list(self.time_snapshots.keys())[-1]
+        
+        # Import evaluators
         from src.evaluator import GraphEvaluator
+        from src.temporal_metrics import TemporalMetricsEvaluator
         
-        # Create evaluators for each time slice (except T5 which we sample from)
-        self.evaluators = {}
-        for slice_name, graph in time_slices.items():
-            if slice_name != "T5":  # Don't evaluate against T5 (we sample from it)
-                self.evaluators[slice_name] = GraphEvaluator(
+        # Create static evaluators (S1-S9) for each snapshot except the final one
+        print("  Initializing static evaluators (S1-S9)...")
+        self.static_evaluators = {}
+        for snapshot_name, graph in self.time_snapshots.items():
+            if snapshot_name != self.final_snapshot_name:
+                self.static_evaluators[snapshot_name] = GraphEvaluator(
                     graph, use_log_transform=use_log_transform
                 )
+        print(f"    Created evaluators for: {list(self.static_evaluators.keys())}")
         
-        print(f"Initialized evaluators for: {list(self.evaluators.keys())}")
+        # Create temporal evaluator (T1-T5)
+        print("  Initializing temporal evaluator (T1-T5)...")
+        self.temporal_evaluator = TemporalMetricsEvaluator(self.time_snapshots)
     
-    def evaluate_sample(self, sampled_graph: nx.Graph,
+    def evaluate_static(self, sampled_graph: nx.Graph,
                         include_s6: bool = True) -> Dict[str, Dict[str, float]]:
         """
-        Evaluate a sample against all earlier time slices.
+        Evaluate a sample against all earlier snapshots using static metrics (S1-S9).
         
         Args:
-            sampled_graph: Graph sampled from T5
+            sampled_graph: Graph sampled from final snapshot
             include_s6: Whether to include S6
         
         Returns:
-            Dictionary {T1: {prop: ks_stat}, T2: {...}, ...}
+            Dictionary {Snapshot_1: {S1: val, S2: val, ...}, ...}
         """
         results = {}
         
-        for slice_name, evaluator in self.evaluators.items():
-            results[slice_name] = evaluator.evaluate_all(
+        for snapshot_name, evaluator in self.static_evaluators.items():
+            results[snapshot_name] = evaluator.evaluate_all(
                 sampled_graph, include_s6=include_s6
             )
         
-        # Compute overall average across all time slices
+        # Compute overall average across all snapshots
         all_avgs = [r["AVG"] for r in results.values()]
-        results["AVG_ALL"] = np.mean(all_avgs)
+        results["S_AVG_ALL"] = float(np.mean(all_avgs))
         
         return results
     
-    def evaluate_method(self, G_T5: nx.Graph, method: str, 
-                        n_samples: int, num_runs: int = 10,
+    def evaluate_temporal(self, sampled_snapshots: Dict[str, nx.Graph]) -> Dict[str, float]:
+        """
+        Evaluate sampled snapshots using temporal metrics (T1-T5).
+        
+        Args:
+            sampled_snapshots: Dict of {Snapshot_1: sampled_G1, ...}
+        
+        Returns:
+            Dictionary with T1-T5 KS statistics and T_AVG
+        """
+        return self.temporal_evaluator.evaluate(sampled_snapshots)
+    
+    def evaluate_full(self, sampled_graph: nx.Graph,
+                      sampled_snapshots: Optional[Dict[str, nx.Graph]] = None,
+                      include_s6: bool = True,
+                      include_temporal: bool = True) -> Dict[str, Union[Dict, float]]:
+        """
+        Full evaluation using both static (S1-S9) and temporal (T1-T5) metrics.
+        
+        Args:
+            sampled_graph: Single sampled graph (for S1-S9 against each snapshot)
+            sampled_snapshots: Sampled graphs at different sizes (for T1-T5)
+                               If None, temporal metrics are skipped
+            include_s6: Include S6 in static evaluation
+            include_temporal: Include T1-T5 temporal metrics
+        
+        Returns:
+            Dictionary with:
+            - Static results per snapshot
+            - S_AVG_ALL: Average S-metric across all snapshots
+            - Temporal results (if include_temporal and sampled_snapshots provided)
+            - T_AVG: Average T-metric
+            - COMBINED_AVG: Overall average of S_AVG_ALL and T_AVG
+        """
+        results = {}
+        
+        # Static metrics (S1-S9) against each historical snapshot
+        static_results = self.evaluate_static(sampled_graph, include_s6)
+        results['static'] = static_results
+        results['S_AVG_ALL'] = static_results['S_AVG_ALL']
+        
+        # Temporal metrics (T1-T5)
+        if include_temporal and sampled_snapshots is not None:
+            temporal_results = self.evaluate_temporal(sampled_snapshots)
+            results['temporal'] = temporal_results
+            results['T_AVG'] = temporal_results['T_AVG']
+            
+            # Combined average
+            results['COMBINED_AVG'] = (results['S_AVG_ALL'] + results['T_AVG']) / 2
+        else:
+            results['temporal'] = None
+            results['T_AVG'] = None
+            results['COMBINED_AVG'] = results['S_AVG_ALL']
+        
+        return results
+    
+    def evaluate_method(self, G_final: nx.Graph, method: str, 
+                        sampling_ratio: float, num_runs: int = 10,
+                        include_temporal: bool = True,
                         **kwargs) -> Dict[str, float]:
         """
         Evaluate a sampling method with multiple runs.
         
+        Creates sampled graphs at different sizes to compute temporal metrics.
+        
         Args:
-            G_T5: Graph at time T5 (to sample from)
+            G_final: Final graph (to sample from)
             method: Sampling method name
-            n_samples: Number of nodes to sample
+            sampling_ratio: Fraction of nodes to sample
             num_runs: Number of runs
+            include_temporal: Include T1-T5 metrics
             **kwargs: Additional arguments for sampler
         
         Returns:
-            Mean KS statistics across runs
+            Mean metrics across runs
         """
         from src.samplers import sample_graph
         
         all_results = defaultdict(list)
         
         for run in range(num_runs):
-            # Sample from T5
-            S = sample_graph(G_T5, method, n_samples, random_state=run, **kwargs)
+            # Sample from final graph
+            n_samples = int(G_final.number_of_nodes() * sampling_ratio)
+            S = sample_graph(G_final, method, n_samples, random_state=run, **kwargs)
             
-            # Evaluate against T1-T4
-            run_results = self.evaluate_sample(S)
+            # Create sampled snapshots for temporal metrics
+            sampled_snapshots = None
+            if include_temporal:
+                sampled_snapshots = self._create_sampled_snapshots(
+                    S, n_samples, sampling_ratio
+                )
+            
+            # Full evaluation
+            run_results = self.evaluate_full(
+                S, sampled_snapshots, 
+                include_s6=True, 
+                include_temporal=include_temporal
+            )
             
             # Collect results
-            for slice_name, stats in run_results.items():
-                if isinstance(stats, dict):
-                    for prop, value in stats.items():
-                        all_results[f"{slice_name}_{prop}"].append(value)
-                else:
-                    all_results[slice_name].append(stats)
+            all_results['S_AVG_ALL'].append(run_results['S_AVG_ALL'])
+            
+            if run_results['T_AVG'] is not None:
+                all_results['T_AVG'].append(run_results['T_AVG'])
+            
+            all_results['COMBINED_AVG'].append(run_results['COMBINED_AVG'])
+            
+            # Also collect individual metrics
+            for snapshot_name, metrics in run_results['static'].items():
+                if isinstance(metrics, dict):
+                    for metric_name, value in metrics.items():
+                        all_results[f"{snapshot_name}_{metric_name}"].append(value)
+            
+            if run_results['temporal'] is not None:
+                for metric_name, value in run_results['temporal'].items():
+                    all_results[f"T_{metric_name}"].append(value)
         
         # Compute means
-        mean_results = {k: np.mean(v) for k, v in all_results.items()}
+        mean_results = {k: float(np.mean(v)) for k, v in all_results.items()}
         
         return mean_results
+    
+    def _create_sampled_snapshots(self, sampled_graph: nx.Graph, 
+                                   n_samples: int, 
+                                   sampling_ratio: float) -> Dict[str, nx.Graph]:
+        """
+        Create snapshots of sampled graph at different sizes for temporal metrics.
+        
+        Simulates what the sampled graph would look like at earlier times.
+        
+        Args:
+            sampled_graph: The full sampled graph
+            n_samples: Number of nodes in full sample
+            sampling_ratio: Original sampling ratio
+        
+        Returns:
+            OrderedDict of sampled snapshots
+        """
+        sampled_snapshots = OrderedDict()
+        nodes = list(sampled_graph.nodes())
+        
+        # Create snapshots at sizes proportional to original snapshots
+        for i, (snapshot_name, orig_snapshot) in enumerate(self.time_snapshots.items()):
+            # Calculate target size based on ratio
+            orig_ratio = orig_snapshot.number_of_nodes() / self.time_snapshots[self.final_snapshot_name].number_of_nodes()
+            target_size = max(1, int(n_samples * orig_ratio))
+            target_size = min(target_size, len(nodes))
+            
+            # Take first target_size nodes (simulating growth)
+            snapshot_nodes = nodes[:target_size]
+            snapshot_graph = sampled_graph.subgraph(snapshot_nodes).copy()
+            
+            sampled_snapshots[snapshot_name] = snapshot_graph
+        
+        return sampled_snapshots
 
 
 # =============================================================================
@@ -444,15 +581,19 @@ class BackInTimeEvaluator:
 def run_back_in_time_experiment(dataset_name: str = "cit-HepTh",
                                  sampling_ratio: float = 0.15,
                                  methods: List[str] = None,
-                                 num_runs: int = 10) -> Dict[str, Dict[str, float]]:
+                                 num_runs: int = 10,
+                                 include_temporal: bool = True) -> Dict[str, Dict[str, float]]:
     """
     Run complete back-in-time experiment on a temporal dataset.
+    
+    Evaluates sampling methods using both S1-S9 and T1-T5 metrics.
     
     Args:
         dataset_name: Name of temporal dataset
         sampling_ratio: Fraction of nodes to sample
         methods: List of methods to test (default: basic set)
         num_runs: Number of runs per method
+        include_temporal: Whether to include T1-T5 metrics
     
     Returns:
         Results dictionary {method: {metric: value}}
@@ -460,7 +601,7 @@ def run_back_in_time_experiment(dataset_name: str = "cit-HepTh",
     from config import FF_FORWARD_PROB_BACKTIME
     
     if methods is None:
-        methods = ["RN", "RW", "FF", "HYB-RPN-FF"]
+        methods = ["RN", "RW", "FF", "HYB-RN-RW", "HYB-RPN-FF"]
     
     print(f"\n{'='*70}")
     print(f"BACK-IN-TIME EXPERIMENT: {dataset_name}")
@@ -470,18 +611,20 @@ def run_back_in_time_experiment(dataset_name: str = "cit-HepTh",
     loader = TemporalGraphLoader(dataset_name)
     G, node_times = loader.load()
     
-    # Create time slices (T1-T5)
-    time_slices = loader.create_time_slices(G, node_times, num_slices=5)
+    # Create time snapshots
+    time_snapshots = loader.create_time_snapshots(G, node_times)
     
-    # Get T5 for sampling
-    G_T5 = time_slices["T5"]
-    n_samples = int(G_T5.number_of_nodes() * sampling_ratio)
+    # Get final snapshot for sampling
+    final_snapshot_name = list(time_snapshots.keys())[-1]
+    G_final = time_snapshots[final_snapshot_name]
+    n_samples = int(G_final.number_of_nodes() * sampling_ratio)
     
-    print(f"\nSampling {n_samples} nodes ({sampling_ratio*100:.0f}%) from T5")
-    print(f"Evaluating against T1, T2, T3, T4")
+    print(f"\n  Sampling {n_samples} nodes ({sampling_ratio*100:.0f}%) from {final_snapshot_name}")
+    print(f"  Evaluating against earlier snapshots")
+    print(f"  Include temporal metrics (T1-T5): {include_temporal}")
     
     # Create evaluator
-    evaluator = BackInTimeEvaluator(time_slices)
+    evaluator = BackInTimeEvaluator(time_snapshots)
     
     # Run experiments
     results = {}
@@ -496,52 +639,103 @@ def run_back_in_time_experiment(dataset_name: str = "cit-HepTh",
             kwargs["alpha"] = 0.5
         
         method_results = evaluator.evaluate_method(
-            G_T5, method, n_samples, num_runs=num_runs, **kwargs
+            G_final, method, sampling_ratio, 
+            num_runs=num_runs, 
+            include_temporal=include_temporal,
+            **kwargs
         )
         
         results[method] = method_results
         
         # Print summary
-        avg_all = method_results.get("AVG_ALL", 0)
-        print(f"    AVG_ALL: {avg_all:.4f}")
+        s_avg = method_results.get("S_AVG_ALL", 0)
+        t_avg = method_results.get("T_AVG", "N/A")
+        combined = method_results.get("COMBINED_AVG", s_avg)
+        
+        print(f"    S_AVG_ALL: {s_avg:.4f}")
+        if include_temporal:
+            print(f"    T_AVG: {t_avg:.4f}")
+            print(f"    COMBINED_AVG: {combined:.4f}")
     
     return results
 
 
-def print_back_in_time_results(results: Dict[str, Dict[str, float]]) -> None:
+def run_all_temporal_experiments(sampling_ratio: float = 0.15,
+                                  methods: List[str] = None,
+                                  num_runs: int = 10,
+                                  include_temporal: bool = True) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """
+    Run back-in-time experiment on ALL temporal datasets.
+    
+    Args:
+        sampling_ratio: Fraction of nodes to sample
+        methods: List of methods to test
+        num_runs: Number of runs per method
+        include_temporal: Whether to include T1-T5 metrics
+    
+    Returns:
+        Results dictionary {dataset: {method: {metric: value}}}
+    """
+    all_results = {}
+    
+    for dataset_name in TEMPORAL_DATASETS.keys():
+        print(f"\n\n{'#'*70}")
+        print(f"# DATASET: {dataset_name}")
+        print(f"{'#'*70}")
+        
+        results = run_back_in_time_experiment(
+            dataset_name=dataset_name,
+            sampling_ratio=sampling_ratio,
+            methods=methods,
+            num_runs=num_runs,
+            include_temporal=include_temporal
+        )
+        
+        all_results[dataset_name] = results
+    
+    return all_results
+
+
+def print_back_in_time_results(results: Dict[str, Dict[str, float]], 
+                                include_temporal: bool = True) -> None:
     """
     Print back-in-time experiment results in a formatted table.
     
     Args:
         results: Results from run_back_in_time_experiment
+        include_temporal: Whether temporal metrics are included
     """
     print(f"\n{'='*70}")
-    print("BACK-IN-TIME RESULTS")
+    print("BACK-IN-TIME RESULTS SUMMARY")
     print(f"{'='*70}")
     
-    # Get time slices
-    time_slices = ["T1", "T2", "T3", "T4"]
-    
     # Header
-    header = f"{'Method':<20}"
-    for t in time_slices:
-        header += f"{t+'_AVG':<12}"
-    header += f"{'AVG_ALL':<12}"
+    if include_temporal:
+        header = f"{'Method':<20}{'S_AVG_ALL':<12}{'T_AVG':<12}{'COMBINED':<12}"
+    else:
+        header = f"{'Method':<20}{'S_AVG_ALL':<12}"
+    
     print(header)
     print("-" * len(header))
     
-    # Sort by AVG_ALL
+    # Sort by combined average (or S_AVG_ALL if no temporal)
+    sort_key = "COMBINED_AVG" if include_temporal else "S_AVG_ALL"
     sorted_methods = sorted(results.keys(), 
-                           key=lambda m: results[m].get("AVG_ALL", 1.0))
+                           key=lambda m: results[m].get(sort_key, 1.0))
     
     for method in sorted_methods:
-        row = f"{method:<20}"
-        for t in time_slices:
-            key = f"{t}_AVG"
-            value = results[method].get(key, 1.0)
-            row += f"{value:<12.4f}"
-        row += f"{results[method].get('AVG_ALL', 1.0):<12.4f}"
+        s_avg = results[method].get("S_AVG_ALL", 1.0)
+        
+        if include_temporal:
+            t_avg = results[method].get("T_AVG", 1.0)
+            combined = results[method].get("COMBINED_AVG", 1.0)
+            row = f"{method:<20}{s_avg:<12.4f}{t_avg:<12.4f}{combined:<12.4f}"
+        else:
+            row = f"{method:<20}{s_avg:<12.4f}"
+        
         print(row)
+    
+    print(f"{'='*70}")
 
 
 # =============================================================================
@@ -552,22 +746,38 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Run Back-in-Time Evaluation")
-    parser.add_argument("--dataset", type=str, default="cit-HepTh",
-                       choices=["cit-HepTh", "cit-HepPh"],
-                       help="Temporal dataset to use")
+    parser.add_argument("--dataset", type=str, default=None,
+                       choices=list(TEMPORAL_DATASETS.keys()) + [None],
+                       help="Temporal dataset to use (None = all)")
     parser.add_argument("--ratio", type=float, default=0.15,
                        help="Sampling ratio")
     parser.add_argument("--runs", type=int, default=10,
                        help="Number of runs per method")
+    parser.add_argument("--no-temporal", action="store_true",
+                       help="Skip temporal metrics (T1-T5)")
     
     args = parser.parse_args()
     
-    # Run experiment
-    results = run_back_in_time_experiment(
-        dataset_name=args.dataset,
-        sampling_ratio=args.ratio,
-        num_runs=args.runs
-    )
+    include_temporal = not args.no_temporal
     
-    # Print results
-    print_back_in_time_results(results)
+    if args.dataset:
+        # Run on single dataset
+        results = run_back_in_time_experiment(
+            dataset_name=args.dataset,
+            sampling_ratio=args.ratio,
+            num_runs=args.runs,
+            include_temporal=include_temporal
+        )
+        print_back_in_time_results(results, include_temporal)
+    else:
+        # Run on all datasets
+        all_results = run_all_temporal_experiments(
+            sampling_ratio=args.ratio,
+            num_runs=args.runs,
+            include_temporal=include_temporal
+        )
+        
+        for dataset_name, results in all_results.items():
+            print(f"\n\n{'='*70}")
+            print(f"RESULTS FOR: {dataset_name}")
+            print_back_in_time_results(results, include_temporal)

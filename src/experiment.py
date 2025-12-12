@@ -1,91 +1,80 @@
+
 import os
 import sys
-import argparse
-import time
 import json
-from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+import time
 import numpy as np
 import pandas as pd
-import networkx as nx
+from datetime import datetime
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Tuple
 from tqdm import tqdm
 
-# Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import (
     DATASETS, SAMPLING_RATIOS, NUM_RUNS, RANDOM_SEED,
     BASELINE_METHODS, HYBRID_COMBINATIONS, HYBRID_ALPHA_VALUES,
-    RESULTS_DIR, DATA_DIR,
-    FF_FORWARD_PROB_SCALEDOWN, FF_FORWARD_PROB_BACKTIME
+    RESULTS_DIR, FF_FORWARD_PROB_SCALEDOWN, FF_FORWARD_PROB_BACKTIME
 )
-from src.data_loader import load_dataset, get_graph_info
-from src.samplers import sample_graph, get_sampler
-from src.evaluator import GraphEvaluator, compute_mean_statistics
 
 
 # =============================================================================
 # Experiment Configuration
 # =============================================================================
 
+@dataclass
 class ExperimentConfig:
-    """
-    Configuration for an experiment run.
-    """
+    """Configuration for an experiment run."""
     
-    def __init__(self,
-                 datasets: Optional[List[str]] = None,
-                 sampling_ratios: Optional[List[float]] = None,
-                 num_runs: int = NUM_RUNS,
-                 baseline_methods: Optional[List[str]] = None,
-                 hybrid_combinations: Optional[List[Tuple[str, str]]] = None,
-                 alpha_values: Optional[List[float]] = None,
-                 sampling_goal: str = "scale_down",
-                 random_seed: Optional[int] = RANDOM_SEED,
-                 include_s6: bool = True):
-        """
-        Initialize experiment configuration.
-        
-        Args:
-            datasets: List of dataset names to use
-            sampling_ratios: List of sampling ratios (0 to 1)
-            num_runs: Number of runs per configuration
-            baseline_methods: List of baseline method names
-            hybrid_combinations: List of (node_method, explore_method) tuples
-            alpha_values: List of alpha values for hybrid methods
-            sampling_goal: "scale_down" or "back_in_time"
-            random_seed: Random seed for reproducibility
-            include_s6: Whether to include S6 (hop-plot on largest WCC)
-        """
-        self.datasets = datasets or list(DATASETS.keys())
-        self.sampling_ratios = sampling_ratios or SAMPLING_RATIOS
-        self.num_runs = num_runs
-        self.baseline_methods = baseline_methods or BASELINE_METHODS
-        self.hybrid_combinations = hybrid_combinations or HYBRID_COMBINATIONS
-        self.alpha_values = alpha_values or HYBRID_ALPHA_VALUES
-        self.sampling_goal = sampling_goal
-        self.random_seed = random_seed
-        self.include_s6 = include_s6
-        
-        # Set Forest Fire probability based on goal
-        if sampling_goal == "scale_down":
-            self.ff_prob = FF_FORWARD_PROB_SCALEDOWN
+    # Datasets to evaluate
+    datasets: List[str] = field(default_factory=lambda: list(DATASETS.keys()))
+    
+    # Sampling ratios to test
+    sampling_ratios: List[float] = field(default_factory=lambda: SAMPLING_RATIOS)
+    
+    # Number of runs per configuration
+    num_runs: int = NUM_RUNS
+    
+    # Baseline methods to test
+    baseline_methods: List[str] = field(default_factory=lambda: BASELINE_METHODS)
+    
+    # Hybrid method combinations
+    hybrid_combinations: List[Tuple[str, str]] = field(
+        default_factory=lambda: HYBRID_COMBINATIONS
+    )
+    
+    # Alpha values for hybrid methods
+    alpha_values: List[float] = field(default_factory=lambda: HYBRID_ALPHA_VALUES)
+    
+    # Sampling goal: "scale_down" or "back_in_time"
+    sampling_goal: str = "scale_down"
+    
+    # Whether to include S6 (hop-plot on largest WCC)
+    include_s6: bool = True
+    
+    # Random seed
+    random_seed: int = RANDOM_SEED
+    
+    def get_ff_prob(self) -> float:
+        """Get Forest Fire probability based on sampling goal."""
+        if self.sampling_goal == "scale_down":
+            return FF_FORWARD_PROB_SCALEDOWN
         else:
-            self.ff_prob = FF_FORWARD_PROB_BACKTIME
+            return FF_FORWARD_PROB_BACKTIME
     
     def to_dict(self) -> dict:
-        """Convert config to dictionary."""
+        """Convert to dictionary for saving."""
         return {
-            "datasets": self.datasets,
-            "sampling_ratios": self.sampling_ratios,
-            "num_runs": self.num_runs,
-            "baseline_methods": self.baseline_methods,
-            "hybrid_combinations": [f"{n}-{e}" for n, e in self.hybrid_combinations],
-            "alpha_values": self.alpha_values,
-            "sampling_goal": self.sampling_goal,
-            "random_seed": self.random_seed,
-            "ff_prob": self.ff_prob,
-            "include_s6": self.include_s6,
+            'datasets': self.datasets,
+            'sampling_ratios': self.sampling_ratios,
+            'num_runs': self.num_runs,
+            'baseline_methods': self.baseline_methods,
+            'hybrid_combinations': [list(c) for c in self.hybrid_combinations],
+            'alpha_values': self.alpha_values,
+            'sampling_goal': self.sampling_goal,
+            'include_s6': self.include_s6,
+            'random_seed': self.random_seed
         }
 
 
@@ -97,11 +86,7 @@ class ExperimentRunner:
     """
     Main experiment runner class.
     
-    Handles the complete experimental pipeline:
-    - Dataset loading
-    - Sampling
-    - Evaluation
-    - Results aggregation
+    Coordinates sampling, evaluation, and result aggregation.
     """
     
     def __init__(self, config: ExperimentConfig):
@@ -113,277 +98,232 @@ class ExperimentRunner:
         """
         self.config = config
         self.results = []
-        self.start_time = None
         
         # Set random seed
-        if config.random_seed is not None:
-            np.random.seed(config.random_seed)
+        np.random.seed(config.random_seed)
     
-    def _run_single_sampling(self, G: nx.Graph, method: str, 
-                              n_samples: int, alpha: float = 0.5,
-                              run_idx: int = 0) -> nx.Graph:
+    def _load_dataset(self, dataset_name: str):
         """
-        Run a single sampling operation.
+        Load a dataset and create evaluator.
         
         Args:
-            G: Original graph
-            method: Sampling method name
-            n_samples: Number of nodes to sample
-            alpha: Alpha value for hybrid methods
-            run_idx: Run index (for seeding)
+            dataset_name: Name of dataset to load
         
         Returns:
-            Sampled subgraph
+            Tuple of (graph, evaluator)
         """
-        # Set seed for this specific run
-        seed = (self.config.random_seed or 0) + run_idx
+        from src.data_loader import DataLoader
+        from src.evaluator import GraphEvaluator
         
-        # FIXED: Get appropriate parameters based on method type
-        kwargs = {}
+        loader = DataLoader()
+        G = loader.load_dataset(dataset_name)
         
-        # FIXED: Only pass alpha to hybrid methods (methods starting with HYB-)
-        if method.startswith("HYB-"):
-            kwargs["alpha"] = alpha
+        print(f"  Loaded {dataset_name}: {G.number_of_nodes():,} nodes, "
+              f"{G.number_of_edges():,} edges")
         
-        # Set Forest Fire probability for FF-containing methods
-        if "FF" in method:
-            kwargs["forward_prob"] = self.config.ff_prob
+        evaluator = GraphEvaluator(G, use_log_transform=True)
         
-        return sample_graph(G, method, n_samples, random_state=seed, **kwargs)
+        return G, evaluator
     
-    def _evaluate_method(self, G: nx.Graph, evaluator: GraphEvaluator,
-                          method: str, n_samples: int, alpha: float = 0.5,
-                          desc: str = "") -> Dict[str, float]:
+    def _run_single_sample(self, G, evaluator, method: str, n_samples: int,
+                           run_id: int, **kwargs) -> Dict:
         """
-        Evaluate a single method across multiple runs.
+        Run a single sampling and evaluation.
         
         Args:
-            G: Original graph
+            G: Graph to sample from
             evaluator: GraphEvaluator instance
             method: Sampling method name
             n_samples: Number of nodes to sample
-            alpha: Alpha value for hybrid methods
-            desc: Description for progress bar
+            run_id: Run identifier (for random seed)
+            **kwargs: Additional sampler arguments
         
         Returns:
-            Dictionary with mean KS statistics
+            Dictionary with evaluation results
         """
-        all_stats = []
+        from src.samplers import sample_graph
         
-        # Define default stats based on whether S6 is included
-        if self.config.include_s6:
-            default_stats = {
-                "in_degree": 1.0, "out_degree": 1.0,
-                "wcc": 1.0, "scc": 1.0, "hop_plot": 1.0,
-                "hop_plot_wcc": 1.0,  # S6
-                "singular_vec": 1.0, "singular_val": 1.0,
-                "clustering": 1.0, "AVG": 1.0
-            }
-        else:
-            default_stats = {
-                "in_degree": 1.0, "out_degree": 1.0,
-                "wcc": 1.0, "scc": 1.0, "hop_plot": 1.0,
-                "singular_vec": 1.0, "singular_val": 1.0,
-                "clustering": 1.0, "AVG": 1.0
-            }
+        # Sample the graph
+        random_state = self.config.random_seed + run_id
+        S = sample_graph(G, method, n_samples, random_state=random_state, **kwargs)
         
-        for run in range(self.config.num_runs):
-            try:
-                # Sample
-                S = self._run_single_sampling(G, method, n_samples, alpha, run)
-                
-                # Evaluate (include_s6 is now configurable)
-                stats = evaluator.evaluate_all(S, include_s6=self.config.include_s6)
-                all_stats.append(stats)
-                
-            except Exception as e:
-                print(f"\n    Warning: Error in {method} run {run}: {e}")
-                # Add worst-case stats
-                all_stats.append(default_stats.copy())
+        # Evaluate
+        results = evaluator.evaluate_all(S, include_s6=self.config.include_s6)
         
-        # Compute mean statistics
-        return compute_mean_statistics({
-            prop: [s[prop] for s in all_stats]
-            for prop in all_stats[0].keys()
-        })
+        return results
     
-    def run_dataset(self, dataset_name: str) -> List[dict]:
+    def _run_method(self, G, evaluator, dataset_name: str, method: str,
+                    ratio: float, method_type: str, alpha: Optional[float] = None,
+                    **kwargs) -> List[Dict]:
         """
-        Run experiments on a single dataset.
+        Run all repetitions for a single method configuration.
         
         Args:
-            dataset_name: Name of the dataset
+            G: Graph
+            evaluator: Evaluator
+            dataset_name: Dataset name
+            method: Method name
+            ratio: Sampling ratio
+            method_type: "baseline" or "hybrid"
+            alpha: Alpha parameter for hybrid methods
+            **kwargs: Additional arguments
         
         Returns:
-            List of result dictionaries
+            List of result dictionaries (one per run)
         """
-        print(f"\n{'='*70}")
-        print(f"DATASET: {dataset_name.upper()}")
-        print(f"{'='*70}")
-        
-        # Load dataset
-        G = load_dataset(dataset_name)
-        info = get_graph_info(G)
-        
-        # Create evaluator (caches original graph properties)
-        evaluator = GraphEvaluator(G, use_log_transform=True)
-        
+        n_samples = int(G.number_of_nodes() * ratio)
         results = []
         
-        # Iterate over sampling ratios
-        for ratio in self.config.sampling_ratios:
-            n_samples = int(G.number_of_nodes() * ratio)
-            print(f"\n  Sampling ratio: {ratio*100:.0f}% ({n_samples} nodes)")
-            print(f"  {'-'*50}")
+        # 将 alpha 添加到 kwargs 传递给采样器
+        if alpha is not None:
+            kwargs['alpha'] = alpha
+        
+        for run in range(self.config.num_runs):
+            eval_results = self._run_single_sample(
+                G, evaluator, method, n_samples, run, **kwargs
+            )
             
-            # Test baseline methods
-            print(f"  Testing baseline methods...")
-            for method in tqdm(self.config.baseline_methods, 
-                              desc="  Baselines", leave=False):
-                stats = self._evaluate_method(
-                    G, evaluator, method, n_samples,
-                    desc=f"{method}"
-                )
-                
-                result = {
-                    "dataset": dataset_name,
-                    "ratio": ratio,
-                    "n_samples": n_samples,
-                    "method": method,
-                    "method_type": "baseline",
-                    "alpha": None,
-                    **stats
-                }
-                results.append(result)
-                
-                # Print result
-                print(f"    {method:12s}: AVG={stats['AVG']:.4f}")
-            
-            # Test hybrid methods
-            print(f"  Testing hybrid methods...")
-            for node_method, explore_method in tqdm(self.config.hybrid_combinations,
-                                                     desc="  Hybrids", leave=False):
-                hybrid_name = f"HYB-{node_method}-{explore_method}"
-                
-                for alpha in self.config.alpha_values:
-                    stats = self._evaluate_method(
-                        G, evaluator, hybrid_name, n_samples, alpha,
-                        desc=f"{hybrid_name}(α={alpha})"
-                    )
-                    
-                    result = {
-                        "dataset": dataset_name,
-                        "ratio": ratio,
-                        "n_samples": n_samples,
-                        "method": f"{hybrid_name}(α={alpha})",
-                        "method_type": "hybrid",
-                        "alpha": alpha,
-                        **stats
-                    }
-                    results.append(result)
-                    
-                    # Print best alpha only
-                    if alpha == self.config.alpha_values[len(self.config.alpha_values)//2]:
-                        print(f"    {hybrid_name:15s}: AVG={stats['AVG']:.4f} (α={alpha})")
+            # Build result row
+            row = {
+                'dataset': dataset_name,
+                'ratio': ratio,
+                'method': method if alpha is None else f"{method}(α={alpha})",
+                'method_type': method_type,
+                'alpha': alpha,
+                'run': run,
+                'n_samples': n_samples,
+            }
+            row.update(eval_results)
+            results.append(row)
+        
+        return results
         
         return results
     
     def run(self) -> pd.DataFrame:
         """
-        Run the complete experiment.
+        Run the full experiment.
         
         Returns:
             DataFrame with all results
         """
-        self.start_time = datetime.now()
+        print("\n" + "="*70)
+        print("STARTING EXPERIMENT")
         print("="*70)
-        print("GRAPH SAMPLING EXPERIMENT")
-        print(f"Started: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Goal: {self.config.sampling_goal}")
-        print(f"Include S6: {self.config.include_s6}")
-        print("="*70)
-        
-        # Print configuration
-        print(f"\nConfiguration:")
-        print(f"  Datasets: {', '.join(self.config.datasets)}")
+        print(f"  Goal: {self.config.sampling_goal}")
+        print(f"  Datasets: {self.config.datasets}")
         print(f"  Sampling ratios: {self.config.sampling_ratios}")
         print(f"  Runs per config: {self.config.num_runs}")
-        print(f"  Baseline methods: {len(self.config.baseline_methods)}")
-        print(f"  Hybrid combinations: {len(self.config.hybrid_combinations)}")
-        print(f"  Alpha values: {self.config.alpha_values}")
-        
-        # Run experiments
-        all_results = []
-        
-        for dataset_name in self.config.datasets:
-            try:
-                results = self.run_dataset(dataset_name)
-                all_results.extend(results)
-            except Exception as e:
-                print(f"\n  ERROR on dataset {dataset_name}: {e}")
-                continue
-        
-        # Convert to DataFrame
-        results_df = pd.DataFrame(all_results)
-        
-        # Print summary
-        end_time = datetime.now()
-        duration = end_time - self.start_time
-        
-        print("\n" + "="*70)
-        print("EXPERIMENT COMPLETE")
-        print(f"Duration: {duration}")
-        print(f"Total results: {len(results_df)}")
+        print(f"  Include S6: {self.config.include_s6}")
         print("="*70)
         
-        return results_df
+        all_results = []
+        start_time = time.time()
+        
+        ff_prob = self.config.get_ff_prob()
+        print(f"  FF forward_prob: {ff_prob} ({self.config.sampling_goal})")
+        
+        for dataset_name in self.config.datasets:
+            print(f"\n--- Dataset: {dataset_name} ---")
+            
+            # Load dataset
+            try:
+                G, evaluator = self._load_dataset(dataset_name)
+            except Exception as e:
+                print(f"  Error loading {dataset_name}: {e}")
+                continue
+            
+            # Calculate total iterations for progress bar
+            n_baselines = len(self.config.baseline_methods)
+            n_hybrids = len(self.config.hybrid_combinations) * len(self.config.alpha_values)
+            n_ratios = len(self.config.sampling_ratios)
+            total_configs = (n_baselines + n_hybrids) * n_ratios
+            
+            pbar = tqdm(total=total_configs, desc=f"  {dataset_name}")
+            
+            for ratio in self.config.sampling_ratios:
+                # Run baseline methods
+                for method in self.config.baseline_methods:
+                    kwargs = {}
+                    if method == "FF":
+                        kwargs['forward_prob'] = ff_prob
+                    
+                    results = self._run_method(
+                        G, evaluator, dataset_name, method, ratio,
+                        method_type='baseline', **kwargs
+                    )
+                    all_results.extend(results)
+                    pbar.update(1)
+                
+                # Run hybrid methods
+                for node_m, explore_m in self.config.hybrid_combinations:
+                    for alpha in self.config.alpha_values:
+                        method = f"HYB-{node_m}-{explore_m}"
+                        
+                        # 注意：alpha 只传递一次，不要在 kwargs 里重复
+                        kwargs = {}
+                        if explore_m == "FF":
+                            kwargs['forward_prob'] = ff_prob
+                        
+                        results = self._run_method(
+                            G, evaluator, dataset_name, method, ratio,
+                            method_type='hybrid', alpha=alpha, **kwargs
+                        )
+                        all_results.extend(results)
+                        pbar.update(1)
+            
+            pbar.close()
+        
+        elapsed = time.time() - start_time
+        print(f"\n✓ Experiment completed in {elapsed:.1f} seconds")
+        print(f"  Total configurations: {len(all_results)}")
+        
+        return pd.DataFrame(all_results)
     
     def save_results(self, results_df: pd.DataFrame, 
-                      prefix: str = "experiment") -> str:
+                     prefix: str = "experiment") -> str:
         """
         Save results to CSV file.
         
         Args:
-            results_df: DataFrame with results
-            prefix: Filename prefix
+            results_df: Results DataFrame
+            prefix: File name prefix
         
         Returns:
             Path to saved file
         """
-        # Create filename with timestamp
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{prefix}_{self.config.sampling_goal}_{timestamp}.csv"
         filepath = os.path.join(RESULTS_DIR, filename)
         
-        # Save
         results_df.to_csv(filepath, index=False)
-        print(f"\nResults saved to: {filepath}")
+        print(f"\n✓ Results saved to: {filepath}")
         
-        # Also save configuration
-        config_file = filepath.replace(".csv", "_config.json")
-        with open(config_file, 'w') as f:
+        # Save config
+        config_path = filepath.replace('.csv', '_config.json')
+        with open(config_path, 'w') as f:
             json.dump(self.config.to_dict(), f, indent=2)
-        print(f"Config saved to: {config_file}")
+        print(f"  Config saved to: {config_path}")
         
         return filepath
 
 
 # =============================================================================
-# Result Analysis Functions
+# Analysis Functions
 # =============================================================================
 
 def generate_summary_table(results_df: pd.DataFrame, 
-                            ratio: float = 0.15,
-                            include_s6: bool = True) -> pd.DataFrame:
+                           ratio: float = 0.15,
+                           include_s6: bool = True) -> pd.DataFrame:
     """
     Generate summary table similar to Table 1 in original paper.
     
-    UPDATED: Now includes S6 (hop_plot_wcc) by default.
-    
     Args:
-        results_df: DataFrame with experiment results
-        ratio: Sampling ratio to filter by
-        include_s6: Whether to include S6 in the summary
+        results_df: Results DataFrame
+        ratio: Sampling ratio to summarize
+        include_s6: Whether S6 was included
     
     Returns:
         Summary DataFrame
@@ -391,174 +331,178 @@ def generate_summary_table(results_df: pd.DataFrame,
     # Filter by ratio
     df = results_df[results_df['ratio'] == ratio].copy()
     
-    # Properties to include (now with S6)
+    # Properties to include
+    properties = ['in_degree', 'out_degree', 'wcc', 'scc', 'hop_plot']
     if include_s6 and 'hop_plot_wcc' in df.columns:
-        properties = ['in_degree', 'out_degree', 'wcc', 'scc', 
-                      'hop_plot', 'hop_plot_wcc',  # S5 and S6
-                      'singular_val', 'singular_vec', 
-                      'clustering', 'AVG']
-    else:
-        properties = ['in_degree', 'out_degree', 'wcc', 'scc', 
-                      'hop_plot', 'singular_val', 'singular_vec', 
-                      'clustering', 'AVG']
+        properties.append('hop_plot_wcc')
+    properties.extend(['singular_vec', 'singular_val', 'clustering', 'AVG'])
     
-    # Filter to only existing columns
+    # Filter to existing columns
     properties = [p for p in properties if p in df.columns]
     
-    # Group by method and compute mean across datasets
+    # Group by method and compute mean
     summary = df.groupby('method')[properties].mean()
     
     # Sort by AVG
     summary = summary.sort_values('AVG')
     
-    # Round to 3 decimal places
-    summary = summary.round(3)
+    # Round for display
+    summary = summary.round(4)
     
     return summary
 
 
-def find_best_methods(results_df: pd.DataFrame) -> Dict[str, str]:
-    """
-    Find the best method for each dataset and ratio.
-    
-    Args:
-        results_df: DataFrame with results
-    
-    Returns:
-        Dictionary with best methods
-    """
-    best = {}
-    
-    for dataset in results_df['dataset'].unique():
-        for ratio in results_df['ratio'].unique():
-            subset = results_df[
-                (results_df['dataset'] == dataset) & 
-                (results_df['ratio'] == ratio)
-            ]
-            
-            if len(subset) > 0:
-                best_row = subset.loc[subset['AVG'].idxmin()]
-                key = f"{dataset}_{ratio}"
-                best[key] = {
-                    "method": best_row['method'],
-                    "AVG": best_row['AVG']
-                }
-    
-    return best
-
-
 def compare_baseline_vs_hybrid(results_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Compare baseline methods against hybrid methods.
+    Compare baseline methods vs hybrid methods.
     
     Args:
-        results_df: DataFrame with results
+        results_df: Results DataFrame
     
     Returns:
         Comparison DataFrame
     """
+    # Separate baseline and hybrid
+    baseline = results_df[results_df['method_type'] == 'baseline']
+    hybrid = results_df[results_df['method_type'] == 'hybrid']
+    
     # Best baseline per dataset/ratio
-    baseline_df = results_df[results_df['method_type'] == 'baseline']
-    best_baseline = baseline_df.groupby(['dataset', 'ratio'])['AVG'].min()
+    baseline_best = baseline.groupby(['dataset', 'ratio'])['AVG'].min().reset_index()
+    baseline_best.columns = ['dataset', 'ratio', 'best_baseline_AVG']
     
     # Best hybrid per dataset/ratio
-    hybrid_df = results_df[results_df['method_type'] == 'hybrid']
-    best_hybrid = hybrid_df.groupby(['dataset', 'ratio'])['AVG'].min()
+    hybrid_best = hybrid.groupby(['dataset', 'ratio'])['AVG'].min().reset_index()
+    hybrid_best.columns = ['dataset', 'ratio', 'best_hybrid_AVG']
     
-    # Create comparison
-    comparison = pd.DataFrame({
-        'best_baseline': best_baseline,
-        'best_hybrid': best_hybrid
-    })
-    comparison['improvement'] = comparison['best_baseline'] - comparison['best_hybrid']
-    comparison['improvement_pct'] = (comparison['improvement'] / comparison['best_baseline'] * 100)
+    # Merge
+    comparison = pd.merge(baseline_best, hybrid_best, on=['dataset', 'ratio'])
+    
+    # Compute improvement
+    comparison['improvement'] = (
+        comparison['best_baseline_AVG'] - comparison['best_hybrid_AVG']
+    )
+    comparison['improvement_pct'] = (
+        comparison['improvement'] / comparison['best_baseline_AVG'] * 100
+    )
     
     return comparison.round(4)
+
+
+def find_best_methods(results_df: pd.DataFrame, 
+                      n_best: int = 5) -> pd.DataFrame:
+    """
+    Find the best methods across all configurations.
+    
+    Args:
+        results_df: Results DataFrame
+        n_best: Number of top methods to return
+    
+    Returns:
+        DataFrame with best methods
+    """
+    # Compute mean AVG per method
+    method_avg = results_df.groupby('method')['AVG'].mean().sort_values()
+    
+    # Get top N
+    top_methods = method_avg.head(n_best).reset_index()
+    top_methods.columns = ['method', 'mean_AVG']
+    
+    # Add method type
+    top_methods['method_type'] = top_methods['method'].apply(
+        lambda x: 'hybrid' if 'HYB' in x else 'baseline'
+    )
+    
+    return top_methods.round(4)
+
+
+def analyze_alpha_effect(results_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Analyze the effect of alpha parameter on hybrid method performance.
+    
+    Args:
+        results_df: Results DataFrame
+    
+    Returns:
+        DataFrame with alpha analysis
+    """
+    # Filter to hybrid methods only
+    hybrid = results_df[results_df['method_type'] == 'hybrid'].copy()
+    
+    if hybrid.empty:
+        return pd.DataFrame()
+    
+    # Group by alpha and compute stats
+    alpha_analysis = hybrid.groupby('alpha')['AVG'].agg(['mean', 'std', 'min', 'max'])
+    alpha_analysis = alpha_analysis.round(4)
+    
+    return alpha_analysis
+
+
+# =============================================================================
+# Quick Test Function
+# =============================================================================
+
+def run_quick_test() -> pd.DataFrame:
+    """
+    Run a quick test experiment with minimal configuration.
+    
+    Returns:
+        Results DataFrame
+    """
+    config = ExperimentConfig(
+        datasets=["cit-HepTh"],
+        sampling_ratios=[0.15],
+        num_runs=3,
+        baseline_methods=["RN", "RW", "FF"],
+        hybrid_combinations=[("RN", "RW")],
+        alpha_values=[0.5],
+        sampling_goal="scale_down",
+        include_s6=True
+    )
+    
+    runner = ExperimentRunner(config)
+    results_df = runner.run()
+    runner.save_results(results_df, prefix="quick_test")
+    
+    return results_df
 
 
 # =============================================================================
 # Main Entry Point
 # =============================================================================
 
-def main():
-    """
-    Main entry point for running experiments.
-    """
-    parser = argparse.ArgumentParser(
-        description="Run Graph Sampling Experiments"
-    )
-    parser.add_argument(
-        "--quick", action="store_true",
-        help="Quick test with reduced parameters"
-    )
-    parser.add_argument(
-        "--dataset", type=str, default=None,
-        help="Run on a single dataset"
-    )
-    parser.add_argument(
-        "--goal", type=str, default="scale_down",
-        choices=["scale_down", "back_in_time"],
-        help="Sampling goal (affects FF probability)"
-    )
-    parser.add_argument(
-        "--runs", type=int, default=NUM_RUNS,
-        help="Number of runs per configuration"
-    )
-    parser.add_argument(
-        "--no-s6", action="store_true",
-        help="Exclude S6 (hop-plot on largest WCC) from evaluation"
-    )
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Run Graph Sampling Experiment")
+    parser.add_argument("--quick", action="store_true", help="Run quick test")
+    parser.add_argument("--full", action="store_true", help="Run full experiment")
+    parser.add_argument("--dataset", type=str, default=None, help="Specific dataset")
+    parser.add_argument("--goal", type=str, default="scale_down",
+                       choices=["scale_down", "back_in_time"])
     
     args = parser.parse_args()
     
-    # Determine whether to include S6
-    include_s6 = not args.no_s6
-    
-    # Create configuration
     if args.quick:
-        # Quick test configuration
+        print("Running quick test...")
+        results = run_quick_test()
+        print("\nSummary:")
+        print(generate_summary_table(results))
+    
+    elif args.full:
         config = ExperimentConfig(
-            datasets=["cit-HepTh"] if args.dataset is None else [args.dataset],
-            sampling_ratios=[0.15],
-            num_runs=3,
-            baseline_methods=["RN", "RW", "FF"],
-            hybrid_combinations=[("RN", "RW"), ("RPN", "FF")],
-            alpha_values=[0.5],
-            sampling_goal=args.goal,
-            include_s6=include_s6
+            datasets=[args.dataset] if args.dataset else list(DATASETS.keys()),
+            sampling_goal=args.goal
         )
+        runner = ExperimentRunner(config)
+        results = runner.run()
+        runner.save_results(results, prefix="full")
+        
+        print("\nSummary at 15% ratio:")
+        print(generate_summary_table(results, ratio=0.15))
+        
+        print("\nBaseline vs Hybrid:")
+        print(compare_baseline_vs_hybrid(results))
+    
     else:
-        # Full configuration
-        config = ExperimentConfig(
-            datasets=[args.dataset] if args.dataset else None,
-            num_runs=args.runs,
-            sampling_goal=args.goal,
-            include_s6=include_s6
-        )
-    
-    # Run experiment
-    runner = ExperimentRunner(config)
-    results_df = runner.run()
-    
-    # Save results
-    runner.save_results(results_df)
-    
-    # Print summary
-    print("\n" + "="*70)
-    print("RESULTS SUMMARY (ratio=0.15)")
-    print("="*70)
-    summary = generate_summary_table(results_df, ratio=0.15, include_s6=include_s6)
-    print(summary.to_string())
-    
-    # Print baseline vs hybrid comparison
-    print("\n" + "="*70)
-    print("BASELINE vs HYBRID COMPARISON")
-    print("="*70)
-    comparison = compare_baseline_vs_hybrid(results_df)
-    print(comparison.to_string())
-    
-    return results_df
-
-
-if __name__ == "__main__":
-    main()
+        print("Use --quick for quick test or --full for full experiment")

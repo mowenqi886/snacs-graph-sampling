@@ -1,292 +1,444 @@
+
+import os
+import sys
 import logging
-import random
 import numpy as np
 import networkx as nx
-from typing import Optional, List, Set, Tuple
-import sys
+from typing import Dict, List, Optional, Tuple, Union
+from datetime import datetime
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import RANDOM_SEED
 
 
-def set_random_seed(seed: Optional[int] = None) -> None:
+# =============================================================================
+# Random Seed Management
+# =============================================================================
+
+def set_seed(seed: int = RANDOM_SEED) -> None:
     """
-    Set random seed for reproducibility across all random number generators.
+    Set random seed for reproducibility.
     
     Args:
-        seed: Random seed value. If None, uses system-generated seed.
+        seed: Random seed value
     """
-    if seed is not None:
-        random.seed(seed)
-        np.random.seed(seed)
-        
+    np.random.seed(seed)
+    import random
+    random.seed(seed)
 
-def get_logger(name: str, level: str = 'INFO') -> logging.Logger:
+
+def get_seed_sequence(base_seed: int, n: int) -> List[int]:
     """
-    Create and configure a logger instance.
+    Generate a sequence of seeds for multiple runs.
     
     Args:
-        name: Name of the logger (typically module name)
-        level: Logging level (DEBUG, INFO, WARNING, ERROR)
-        
+        base_seed: Base seed value
+        n: Number of seeds to generate
+    
+    Returns:
+        List of seed values
+    """
+    return [base_seed + i for i in range(n)]
+
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+
+def setup_logger(name: str = "graph_sampling", 
+                 level: int = logging.INFO,
+                 log_file: Optional[str] = None) -> logging.Logger:
+    """
+    Configure and return a logger.
+    
+    Args:
+        name: Logger name
+        level: Logging level
+        log_file: Optional file path for logging
+    
     Returns:
         Configured logger instance
     """
     logger = logging.getLogger(name)
+    logger.setLevel(level)
     
-    if not logger.handlers:
-        handler = logging.StreamHandler(sys.stdout)
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+    # Clear existing handlers
+    logger.handlers = []
     
-    logger.setLevel(getattr(logging, level.upper()))
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(level)
+    console_format = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    console_handler.setFormatter(console_format)
+    logger.addHandler(console_handler)
+    
+    # File handler (if specified)
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(level)
+        file_handler.setFormatter(console_format)
+        logger.addHandler(file_handler)
+    
     return logger
 
 
-def ensure_connected_sample(
-    G: nx.Graph,
-    sampled_nodes: Set[int],
-    target_size: int
-) -> Set[int]:
-    """
-    Ensure the sampled nodes form a connected subgraph by adding
-    bridging nodes if necessary.
-    
-    Args:
-        G: Original graph
-        sampled_nodes: Set of initially sampled nodes
-        target_size: Target number of nodes
-        
-    Returns:
-        Updated set of sampled nodes
-    """
-    if len(sampled_nodes) == 0:
-        return sampled_nodes
-    
-    # Create subgraph from sampled nodes
-    subgraph = G.subgraph(sampled_nodes)
-    
-    # If already connected, return as is
-    if G.is_directed():
-        if nx.is_weakly_connected(subgraph):
-            return sampled_nodes
-    else:
-        if nx.is_connected(subgraph):
-            return sampled_nodes
-    
-    # Get connected components
-    if G.is_directed():
-        components = list(nx.weakly_connected_components(subgraph))
-    else:
-        components = list(nx.connected_components(subgraph))
-    
-    # Sort components by size (largest first)
-    components = sorted(components, key=len, reverse=True)
-    
-    # Try to connect smaller components to the largest one
-    largest_component = components[0]
-    result_nodes = set(largest_component)
-    
-    for comp in components[1:]:
-        if len(result_nodes) >= target_size:
-            break
-            
-        # Find shortest path between this component and the result
-        for node in comp:
-            if len(result_nodes) >= target_size:
-                break
-            result_nodes.add(node)
-    
-    return result_nodes
+# =============================================================================
+# Graph Statistics
+# =============================================================================
 
-
-def get_largest_component(G: nx.Graph) -> nx.Graph:
-    """
-    Get the largest (weakly) connected component of a graph.
-    
-    Args:
-        G: Input graph
-        
-    Returns:
-        Subgraph containing only the largest component
-    """
-    if G.is_directed():
-        largest_cc = max(nx.weakly_connected_components(G), key=len)
-    else:
-        largest_cc = max(nx.connected_components(G), key=len)
-    
-    return G.subgraph(largest_cc).copy()
-
-
-def compute_effective_diameter(G: nx.Graph, percentile: float = 0.9) -> float:
-    """
-    Compute the effective diameter of a graph.
-    
-    The effective diameter is defined as the minimum number of hops
-    in which a given percentile of all connected pairs can reach each other.
-    
-    Args:
-        G: Input graph
-        percentile: Percentile for effective diameter (default 0.9 = 90%)
-        
-    Returns:
-        Effective diameter value
-    """
-    if G.number_of_nodes() == 0:
-        return 0.0
-    
-    # Sample nodes for large graphs
-    nodes = list(G.nodes())
-    n_samples = min(500, len(nodes))
-    sample_nodes = np.random.choice(nodes, size=n_samples, replace=False)
-    
-    # Compute shortest path lengths
-    all_lengths = []
-    for node in sample_nodes:
-        lengths = nx.single_source_shortest_path_length(G, node)
-        all_lengths.extend([l for l in lengths.values() if l > 0])
-    
-    if not all_lengths:
-        return 0.0
-    
-    # Compute percentile
-    return np.percentile(all_lengths, percentile * 100)
-
-
-def graph_statistics(G: nx.Graph) -> dict:
+def compute_graph_statistics(G: nx.Graph) -> Dict[str, Union[int, float]]:
     """
     Compute basic statistics for a graph.
     
     Args:
-        G: Input graph
-        
+        G: NetworkX graph
+    
     Returns:
-        Dictionary containing graph statistics
+        Dictionary with statistics
     """
     stats = {
-        'num_nodes': G.number_of_nodes(),
-        'num_edges': G.number_of_edges(),
+        'n_nodes': G.number_of_nodes(),
+        'n_edges': G.number_of_edges(),
         'is_directed': G.is_directed(),
     }
     
-    if G.number_of_nodes() > 0:
+    if G.number_of_nodes() == 0:
+        return stats
+    
+    # Density
+    stats['density'] = nx.density(G)
+    
+    # Degree statistics
+    if G.is_directed():
+        in_degrees = [d for n, d in G.in_degree()]
+        out_degrees = [d for n, d in G.out_degree()]
+        stats['avg_in_degree'] = np.mean(in_degrees)
+        stats['avg_out_degree'] = np.mean(out_degrees)
+        stats['max_in_degree'] = max(in_degrees)
+        stats['max_out_degree'] = max(out_degrees)
+    else:
         degrees = [d for n, d in G.degree()]
         stats['avg_degree'] = np.mean(degrees)
         stats['max_degree'] = max(degrees)
-        stats['min_degree'] = min(degrees)
-        
-        # Density
-        n = G.number_of_nodes()
-        m = G.number_of_edges()
-        if n > 1:
-            if G.is_directed():
-                stats['density'] = m / (n * (n - 1))
-            else:
-                stats['density'] = 2 * m / (n * (n - 1))
-        else:
-            stats['density'] = 0.0
+    
+    # Connected components
+    if G.is_directed():
+        wccs = list(nx.weakly_connected_components(G))
+        sccs = list(nx.strongly_connected_components(G))
+        stats['n_wcc'] = len(wccs)
+        stats['n_scc'] = len(sccs)
+        stats['largest_wcc_size'] = max(len(c) for c in wccs) if wccs else 0
+        stats['largest_scc_size'] = max(len(c) for c in sccs) if sccs else 0
+    else:
+        ccs = list(nx.connected_components(G))
+        stats['n_cc'] = len(ccs)
+        stats['largest_cc_size'] = max(len(c) for c in ccs) if ccs else 0
     
     return stats
 
 
-def print_graph_info(G: nx.Graph, name: str = "Graph") -> None:
+def compute_effective_diameter(G: nx.Graph, 
+                                percentile: float = 0.9,
+                                num_samples: int = 500) -> float:
     """
-    Print formatted information about a graph.
+    Compute effective diameter of a graph.
+    
+    The effective diameter is the minimum number of hops in which
+    `percentile` fraction of all connected pairs can reach each other.
     
     Args:
-        G: Input graph
-        name: Name to display for the graph
-    """
-    stats = graph_statistics(G)
+        G: NetworkX graph
+        percentile: Fraction of pairs (default: 0.9 = 90%)
+        num_samples: Number of source nodes to sample
     
-    print(f"\n{'='*50}")
-    print(f" {name}")
-    print(f"{'='*50}")
-    print(f" Nodes:       {stats['num_nodes']:,}")
-    print(f" Edges:       {stats['num_edges']:,}")
-    print(f" Directed:    {stats['is_directed']}")
-    if stats['num_nodes'] > 0:
-        print(f" Avg Degree:  {stats['avg_degree']:.2f}")
-        print(f" Max Degree:  {stats['max_degree']}")
-        print(f" Density:     {stats['density']:.6f}")
-    print(f"{'='*50}\n")
-
-
-def safe_division(a: float, b: float, default: float = 0.0) -> float:
-    """
-    Perform division with safety check for zero denominator.
-    
-    Args:
-        a: Numerator
-        b: Denominator
-        default: Value to return if denominator is zero
-        
     Returns:
-        Result of division or default value
+        Effective diameter
     """
-    return a / b if b != 0 else default
+    if G.number_of_nodes() < 2:
+        return 0.0
+    
+    nodes = list(G.nodes())
+    num_samples = min(num_samples, len(nodes))
+    sample_nodes = np.random.choice(nodes, size=num_samples, replace=False)
+    
+    all_distances = []
+    
+    for source in sample_nodes:
+        try:
+            lengths = nx.single_source_shortest_path_length(G, source)
+            all_distances.extend([d for d in lengths.values() if d > 0])
+        except nx.NetworkXError:
+            continue
+    
+    if not all_distances:
+        return 0.0
+    
+    return float(np.percentile(all_distances, percentile * 100))
 
 
-def normalize_distribution(values: List[float]) -> np.ndarray:
+def compute_average_clustering(G: nx.Graph) -> float:
     """
-    Normalize a list of values to form a probability distribution.
+    Compute average clustering coefficient.
     
     Args:
-        values: List of non-negative values
-        
-    Returns:
-        Normalized numpy array summing to 1
-    """
-    values = np.array(values, dtype=float)
-    total = values.sum()
+        G: NetworkX graph
     
+    Returns:
+        Average clustering coefficient
+    """
+    if G.number_of_nodes() < 3:
+        return 0.0
+    
+    if G.is_directed():
+        G_undirected = G.to_undirected()
+        return nx.average_clustering(G_undirected)
+    
+    return nx.average_clustering(G)
+
+
+# =============================================================================
+# Results Formatting
+# =============================================================================
+
+def format_results_table(results: Dict[str, Dict[str, float]],
+                          sort_by: str = "AVG") -> str:
+    """
+    Format results dictionary as a text table.
+    
+    Args:
+        results: Dictionary {method: {metric: value}}
+        sort_by: Metric to sort by
+    
+    Returns:
+        Formatted string table
+    """
+    if not results:
+        return "No results to display"
+    
+    # Get all metrics
+    first_result = list(results.values())[0]
+    metrics = list(first_result.keys())
+    
+    # Sort methods
+    sorted_methods = sorted(results.keys(), 
+                           key=lambda m: results[m].get(sort_by, 1.0))
+    
+    # Build header
+    header = f"{'Method':<25}"
+    for metric in metrics:
+        header += f"{metric:<12}"
+    
+    lines = [header, "-" * len(header)]
+    
+    # Build rows
+    for method in sorted_methods:
+        row = f"{method:<25}"
+        for metric in metrics:
+            value = results[method].get(metric, 0.0)
+            row += f"{value:<12.4f}"
+        lines.append(row)
+    
+    return "\n".join(lines)
+
+
+def format_time(seconds: float) -> str:
+    """
+    Format time duration as human-readable string.
+    
+    Args:
+        seconds: Time in seconds
+    
+    Returns:
+        Formatted string (e.g., "1h 23m 45s")
+    """
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        minutes = int(seconds // 60)
+        secs = seconds % 60
+        return f"{minutes}m {secs:.0f}s"
+    else:
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        return f"{hours}h {minutes}m"
+
+
+def format_number(n: int) -> str:
+    """
+    Format large number with commas.
+    
+    Args:
+        n: Number to format
+    
+    Returns:
+        Formatted string (e.g., "1,234,567")
+    """
+    return f"{n:,}"
+
+
+# =============================================================================
+# File Utilities
+# =============================================================================
+
+def ensure_dir(path: str) -> str:
+    """
+    Ensure directory exists, create if not.
+    
+    Args:
+        path: Directory path
+    
+    Returns:
+        Same path (for chaining)
+    """
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def get_timestamp() -> str:
+    """
+    Get current timestamp string.
+    
+    Returns:
+        Timestamp string (e.g., "20240101_123456")
+    """
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def safe_filename(name: str) -> str:
+    """
+    Convert string to safe filename.
+    
+    Args:
+        name: Original string
+    
+    Returns:
+        Safe filename string
+    """
+    # Replace unsafe characters
+    unsafe_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ']
+    result = name
+    for char in unsafe_chars:
+        result = result.replace(char, '_')
+    return result
+
+
+# =============================================================================
+# Progress Display
+# =============================================================================
+
+def print_progress_bar(iteration: int, total: int, 
+                       prefix: str = '', suffix: str = '',
+                       length: int = 50, fill: str = '█') -> None:
+    """
+    Print a progress bar to console.
+    
+    Args:
+        iteration: Current iteration
+        total: Total iterations
+        prefix: Prefix string
+        suffix: Suffix string
+        length: Bar length
+        fill: Fill character
+    """
     if total == 0:
-        return np.ones_like(values) / len(values)
+        percent = 100
+    else:
+        percent = 100 * (iteration / float(total))
     
-    return values / total
+    filled_length = int(length * iteration // total)
+    bar = fill * filled_length + '-' * (length - filled_length)
+    
+    print(f'\r{prefix} |{bar}| {percent:.1f}% {suffix}', end='\r')
+    
+    if iteration == total:
+        print()
 
 
-def sample_with_replacement_limit(
-    items: List,
-    weights: List[float],
-    n: int,
-    max_replacement: int = 1
-) -> List:
+# =============================================================================
+# Validation Utilities
+# =============================================================================
+
+def validate_sampling_ratio(ratio: float) -> float:
     """
-    Sample items with weighted probabilities, limiting how many times
-    each item can be selected.
+    Validate and normalize sampling ratio.
     
     Args:
-        items: List of items to sample from
-        weights: Sampling weights (will be normalized)
-        n: Number of items to sample
-        max_replacement: Maximum times an item can be selected
-        
+        ratio: Sampling ratio (should be between 0 and 1)
+    
     Returns:
-        List of sampled items
+        Validated ratio
+    
+    Raises:
+        ValueError: If ratio is invalid
     """
-    if n >= len(items) * max_replacement:
-        return list(items) * max_replacement
+    if not 0 < ratio <= 1:
+        raise ValueError(f"Sampling ratio must be in (0, 1], got {ratio}")
+    return ratio
+
+
+def validate_graph(G: nx.Graph) -> None:
+    """
+    Validate that graph is suitable for sampling.
     
-    weights = normalize_distribution(weights)
-    selected = []
-    counts = {item: 0 for item in items}
+    Args:
+        G: NetworkX graph
     
-    while len(selected) < n:
-        # Create valid items and weights
-        valid_items = [item for item in items if counts[item] < max_replacement]
-        if not valid_items:
-            break
-            
-        valid_weights = normalize_distribution([
-            weights[items.index(item)] for item in valid_items
-        ])
-        
-        # Sample one item
-        idx = np.random.choice(len(valid_items), p=valid_weights)
-        item = valid_items[idx]
-        selected.append(item)
-        counts[item] += 1
+    Raises:
+        ValueError: If graph is invalid
+    """
+    if G.number_of_nodes() == 0:
+        raise ValueError("Graph has no nodes")
     
-    return selected
+    if G.number_of_edges() == 0:
+        raise ValueError("Graph has no edges")
+
+
+# =============================================================================
+# Demo
+# =============================================================================
+
+if __name__ == "__main__":
+    print("="*70)
+    print("UTILITIES MODULE DEMO")
+    print("="*70)
+    
+    # Set seed
+    set_seed(42)
+    print("\n1. Random seed set to 42")
+    
+    # Create test graph
+    G = nx.barabasi_albert_graph(500, 3, seed=42)
+    
+    # Compute statistics
+    print("\n2. Graph Statistics:")
+    stats = compute_graph_statistics(G)
+    for key, value in stats.items():
+        if isinstance(value, float):
+            print(f"   {key}: {value:.4f}")
+        else:
+            print(f"   {key}: {value}")
+    
+    # Effective diameter
+    print("\n3. Effective Diameter (90th percentile):")
+    diameter = compute_effective_diameter(G)
+    print(f"   {diameter:.2f}")
+    
+    # Average clustering
+    print("\n4. Average Clustering Coefficient:")
+    clustering = compute_average_clustering(G)
+    print(f"   {clustering:.4f}")
+    
+    # Format time
+    print("\n5. Time Formatting:")
+    for secs in [45, 125, 3725]:
+        print(f"   {secs} seconds = {format_time(secs)}")
+    
+    # Format numbers
+    print("\n6. Number Formatting:")
+    for n in [1234, 1234567, 12345678901]:
+        print(f"   {n} = {format_number(n)}")
+    
+    print("\n✓ Utilities demo completed!")

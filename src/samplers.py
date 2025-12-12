@@ -1,331 +1,268 @@
+
 import numpy as np
 import networkx as nx
-from typing import Set, List, Optional, Tuple, Union
-from collections import deque
-
+from typing import Optional, Dict, List, Tuple, Set, Union
+from abc import ABC, abstractmethod
 import sys
 import os
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import (
     RANDOM_WALK_RESTART_PROB,
     RANDOM_WALK_MAX_STEPS_MULTIPLIER,
     FF_FORWARD_PROB_SCALEDOWN,
-    FF_BACKWARD_PROB,
+    FF_FORWARD_PROB_BACKTIME,
+    FF_BACKWARD_PROB
 )
 
 
 # =============================================================================
-# Base Sampling Class
+# Base Sampler Class
 # =============================================================================
 
-class GraphSampler:
+class GraphSampler(ABC):
     """
-    Base class for graph sampling algorithms.
+    Abstract base class for graph samplers.
     
-    All sampling methods return an induced subgraph containing the sampled nodes
-    and all edges between them from the original graph.
+    All samplers inherit from this class and implement the sample() method.
     """
     
     def __init__(self, G: nx.Graph, random_state: Optional[int] = None):
         """
-        Initialize the sampler.
+        Initialize sampler with a graph.
         
         Args:
-            G: Original graph to sample from
+            G: NetworkX graph to sample from
             random_state: Random seed for reproducibility
         """
         self.G = G
-        self.nodes = list(G.nodes())
         self.n_nodes = G.number_of_nodes()
+        self.n_edges = G.number_of_edges()
+        self.nodes = list(G.nodes())
         
-        # Set random state
         if random_state is not None:
             np.random.seed(random_state)
         
-        # Precompute useful properties (lazily)
+        # Lazy-loaded properties
         self._pagerank = None
         self._degrees = None
     
     @property
-    def pagerank(self) -> dict:
-        """Lazily compute PageRank scores."""
+    def pagerank(self) -> Dict:
+        """Lazy-load PageRank values."""
         if self._pagerank is None:
-            self._pagerank = nx.pagerank(self.G)
+            self._pagerank = nx.pagerank(self.G, alpha=0.85)
         return self._pagerank
     
     @property
-    def degrees(self) -> dict:
-        """Lazily compute node degrees."""
+    def degrees(self) -> Dict:
+        """Lazy-load degree values."""
         if self._degrees is None:
-            self._degrees = dict(self.G.degree())
+            if self.G.is_directed():
+                # Use total degree for directed graphs
+                self._degrees = {n: self.G.in_degree(n) + self.G.out_degree(n) 
+                                for n in self.G.nodes()}
+            else:
+                self._degrees = dict(self.G.degree())
         return self._degrees
     
-    def get_neighbors(self, node: int) -> List[int]:
+    @abstractmethod
+    def sample(self, n_samples: int) -> nx.Graph:
         """
-        Get neighbors of a node (handles both directed and undirected graphs).
+        Sample nodes from the graph and return induced subgraph.
         
         Args:
-            node: Node to get neighbors for
+            n_samples: Number of nodes to sample
         
         Returns:
-            List of neighbor nodes
+            Induced subgraph on sampled nodes
         """
-        if self.G.is_directed():
-            # For directed graphs, consider out-neighbors for exploration
-            return list(self.G.successors(node))
-        return list(self.G.neighbors(node))
+        pass
     
-    def get_all_neighbors(self, node: int) -> List[int]:
+    def _get_induced_subgraph(self, sampled_nodes: Set[int]) -> nx.Graph:
         """
-        Get all neighbors (both in and out for directed graphs).
+        Get the induced subgraph on sampled nodes.
         
         Args:
-            node: Node to get neighbors for
-        
-        Returns:
-            List of all neighbor nodes
-        """
-        if self.G.is_directed():
-            out_neighbors = set(self.G.successors(node))
-            in_neighbors = set(self.G.predecessors(node))
-            return list(out_neighbors | in_neighbors)
-        return list(self.G.neighbors(node))
-    
-    def create_subgraph(self, nodes: Set[int]) -> nx.Graph:
-        """
-        Create induced subgraph from selected nodes.
-        
-        Args:
-            nodes: Set of nodes to include
+            sampled_nodes: Set of node IDs to include
         
         Returns:
             Induced subgraph
         """
-        return self.G.subgraph(nodes).copy()
-    
-    def sample(self, n_samples: int) -> nx.Graph:
-        """
-        Sample nodes from the graph. To be implemented by subclasses.
-        
-        Args:
-            n_samples: Number of nodes to sample
-        
-        Returns:
-            Induced subgraph on sampled nodes
-        """
-        raise NotImplementedError("Subclasses must implement sample()")
+        return self.G.subgraph(sampled_nodes).copy()
 
 
 # =============================================================================
-# Node Selection Methods (Baseline)
+# Node Selection Samplers (RN, RPN, RDN)
 # =============================================================================
 
 class RandomNodeSampler(GraphSampler):
     """
-    Random Node (RN) Sampling.
+    RN: Random Node Sampling
     
-    Select nodes uniformly at random. This is the simplest baseline.
+    Select n nodes uniformly at random.
+    Simple but may miss important structural features.
     """
     
     def sample(self, n_samples: int) -> nx.Graph:
-        """
-        Perform random node sampling.
-        
-        Args:
-            n_samples: Number of nodes to sample
-        
-        Returns:
-            Induced subgraph on sampled nodes
-        """
+        """Sample n nodes uniformly at random."""
         n_samples = min(n_samples, self.n_nodes)
         sampled_nodes = set(np.random.choice(self.nodes, size=n_samples, replace=False))
-        return self.create_subgraph(sampled_nodes)
+        return self._get_induced_subgraph(sampled_nodes)
 
 
 class RandomPageRankNodeSampler(GraphSampler):
     """
-    Random PageRank Node (RPN) Sampling.
+    RPN: Random PageRank Node Sampling
     
-    Select nodes with probability proportional to their PageRank score.
-    Higher PageRank nodes are more likely to be selected.
+    Select nodes with probability proportional to PageRank.
+    Favors important/central nodes.
     """
     
     def sample(self, n_samples: int) -> nx.Graph:
-        """
-        Perform PageRank-weighted node sampling.
-        
-        Args:
-            n_samples: Number of nodes to sample
-        
-        Returns:
-            Induced subgraph on sampled nodes
-        """
+        """Sample n nodes weighted by PageRank."""
         n_samples = min(n_samples, self.n_nodes)
         
-        # Get PageRank scores as sampling probabilities
-        nodes = list(self.pagerank.keys())
-        probs = np.array([self.pagerank[n] for n in nodes])
-        probs = probs / probs.sum()  # Normalize
+        # Get PageRank probabilities
+        pr_values = np.array([self.pagerank[n] for n in self.nodes])
+        pr_probs = pr_values / pr_values.sum()
         
         # Sample without replacement
-        sampled_nodes = set(np.random.choice(nodes, size=n_samples, 
-                                              replace=False, p=probs))
-        return self.create_subgraph(sampled_nodes)
+        sampled_indices = np.random.choice(
+            len(self.nodes), size=n_samples, replace=False, p=pr_probs
+        )
+        sampled_nodes = set(self.nodes[i] for i in sampled_indices)
+        
+        return self._get_induced_subgraph(sampled_nodes)
 
 
 class RandomDegreeNodeSampler(GraphSampler):
     """
-    Random Degree Node (RDN) Sampling.
+    RDN: Random Degree Node Sampling
     
-    Select nodes with probability proportional to their degree.
-    Higher degree nodes are more likely to be selected.
+    Select nodes with probability proportional to degree.
+    Favors high-degree (hub) nodes.
     """
     
     def sample(self, n_samples: int) -> nx.Graph:
-        """
-        Perform degree-weighted node sampling.
-        
-        Args:
-            n_samples: Number of nodes to sample
-        
-        Returns:
-            Induced subgraph on sampled nodes
-        """
+        """Sample n nodes weighted by degree."""
         n_samples = min(n_samples, self.n_nodes)
         
-        # Get degrees as sampling probabilities
-        nodes = list(self.degrees.keys())
-        probs = np.array([self.degrees[n] for n in nodes], dtype=float)
-        
-        # Handle zero-degree nodes
-        probs = probs + 1e-10
-        probs = probs / probs.sum()
+        # Get degree probabilities
+        degree_values = np.array([max(1, self.degrees[n]) for n in self.nodes])
+        degree_probs = degree_values / degree_values.sum()
         
         # Sample without replacement
-        sampled_nodes = set(np.random.choice(nodes, size=n_samples,
-                                              replace=False, p=probs))
-        return self.create_subgraph(sampled_nodes)
+        sampled_indices = np.random.choice(
+            len(self.nodes), size=n_samples, replace=False, p=degree_probs
+        )
+        sampled_nodes = set(self.nodes[i] for i in sampled_indices)
+        
+        return self._get_induced_subgraph(sampled_nodes)
 
 
 # =============================================================================
-# Exploration Methods (Baseline)
+# Exploration Samplers (RW, RJ, FF)
 # =============================================================================
 
 class RandomWalkSampler(GraphSampler):
     """
-    Random Walk (RW) Sampling.
+    RW: Random Walk Sampling
     
-    Start from a random node and perform random walk. With probability c,
-    restart from the initial node (or a random node). Collect all visited nodes.
+    Perform random walk starting from a random node.
+    With probability c, restart from the initial node.
     
-    Parameters from Leskovec & Faloutsos 2006:
-    - c = 0.15 (restart probability)
+    Parameters:
+        restart_prob: Probability of restarting (default: 0.15)
     """
     
     def __init__(self, G: nx.Graph, random_state: Optional[int] = None,
                  restart_prob: float = RANDOM_WALK_RESTART_PROB):
-        """
-        Initialize random walk sampler.
-        
-        Args:
-            G: Original graph
-            random_state: Random seed
-            restart_prob: Probability of restarting (c)
-        """
         super().__init__(G, random_state)
         self.restart_prob = restart_prob
     
     def sample(self, n_samples: int) -> nx.Graph:
-        """
-        Perform random walk sampling.
-        
-        Args:
-            n_samples: Number of nodes to sample
-        
-        Returns:
-            Induced subgraph on sampled nodes
-        """
+        """Sample n nodes via random walk."""
         n_samples = min(n_samples, self.n_nodes)
-        sampled_nodes = set()
         
-        # Start from a random node
+        sampled_nodes = set()
+        max_steps = n_samples * RANDOM_WALK_MAX_STEPS_MULTIPLIER
+        
+        # Start from random node
         start_node = np.random.choice(self.nodes)
         current_node = start_node
         sampled_nodes.add(current_node)
         
-        # Maximum steps to avoid infinite loops
-        max_steps = RANDOM_WALK_MAX_STEPS_MULTIPLIER * n_samples
         steps = 0
-        
         while len(sampled_nodes) < n_samples and steps < max_steps:
             steps += 1
             
-            # With probability c, restart
+            # With probability restart_prob, restart from start node
             if np.random.random() < self.restart_prob:
                 current_node = start_node
             else:
-                # Move to a random neighbor
-                neighbors = self.get_neighbors(current_node)
+                # Get neighbors
+                if self.G.is_directed():
+                    neighbors = list(self.G.successors(current_node))
+                    if not neighbors:
+                        neighbors = list(self.G.predecessors(current_node))
+                else:
+                    neighbors = list(self.G.neighbors(current_node))
+                
                 if neighbors:
                     current_node = np.random.choice(neighbors)
                 else:
-                    # Dead end, restart from a random node
+                    # Stuck - restart from a new random node
                     current_node = np.random.choice(self.nodes)
             
             sampled_nodes.add(current_node)
         
-        return self.create_subgraph(sampled_nodes)
+        return self._get_induced_subgraph(sampled_nodes)
 
 
 class RandomJumpSampler(GraphSampler):
     """
-    Random Jump (RJ) Sampling.
+    RJ: Random Jump Sampling
     
-    Similar to random walk, but can jump to any random node (not just the start)
-    with probability c.
+    Similar to Random Walk, but with probability c, jump to 
+    ANY random node (not just the start node).
+    
+    Parameters:
+        jump_prob: Probability of jumping to random node (default: 0.15)
     """
     
     def __init__(self, G: nx.Graph, random_state: Optional[int] = None,
                  jump_prob: float = RANDOM_WALK_RESTART_PROB):
-        """
-        Initialize random jump sampler.
-        
-        Args:
-            G: Original graph
-            random_state: Random seed
-            jump_prob: Probability of random jump
-        """
         super().__init__(G, random_state)
         self.jump_prob = jump_prob
     
     def sample(self, n_samples: int) -> nx.Graph:
-        """
-        Perform random jump sampling.
-        
-        Args:
-            n_samples: Number of nodes to sample
-        
-        Returns:
-            Induced subgraph on sampled nodes
-        """
+        """Sample n nodes via random walk with random jumps."""
         n_samples = min(n_samples, self.n_nodes)
-        sampled_nodes = set()
         
-        # Start from a random node
+        sampled_nodes = set()
+        max_steps = n_samples * RANDOM_WALK_MAX_STEPS_MULTIPLIER
+        
+        # Start from random node
         current_node = np.random.choice(self.nodes)
         sampled_nodes.add(current_node)
         
-        max_steps = RANDOM_WALK_MAX_STEPS_MULTIPLIER * n_samples
         steps = 0
-        
         while len(sampled_nodes) < n_samples and steps < max_steps:
             steps += 1
             
-            # With probability c, jump to a random node
+            # With probability jump_prob, jump to ANY random node
             if np.random.random() < self.jump_prob:
                 current_node = np.random.choice(self.nodes)
             else:
-                neighbors = self.get_neighbors(current_node)
+                # Get neighbors
+                if self.G.is_directed():
+                    neighbors = list(self.G.successors(current_node))
+                    if not neighbors:
+                        neighbors = list(self.G.predecessors(current_node))
+                else:
+                    neighbors = list(self.G.neighbors(current_node))
+                
                 if neighbors:
                     current_node = np.random.choice(neighbors)
                 else:
@@ -333,341 +270,235 @@ class RandomJumpSampler(GraphSampler):
             
             sampled_nodes.add(current_node)
         
-        return self.create_subgraph(sampled_nodes)
+        return self._get_induced_subgraph(sampled_nodes)
 
 
 class ForestFireSampler(GraphSampler):
     """
-    Forest Fire (FF) Sampling.
+    FF: Forest Fire Sampling
     
-    Start from a random seed node. "Burn" a random number of outgoing edges
-    (geometrically distributed with mean 1/(1-p_f)). Recursively apply to 
-    burned neighbors. Continue until n nodes are collected.
+    BFS-like exploration where each node "burns" a geometric number 
+    of neighbors (with mean p_f/(1-p_f) for forward, p_b/(1-p_b) for backward).
     
-    Parameters from Leskovec & Faloutsos 2006:
-    - p_f = 0.7 for Scale-down goal
-    - p_f = 0.2 for Back-in-time goal
-    - p_b = 0 (no backward burning)
+    Parameters:
+        forward_prob: Forward burning probability p_f
+        backward_prob: Backward burning probability p_b (for directed graphs)
+    
+    From the paper:
+    - Scale-down: Use p_f = 0.7 (larger fires)
+    - Back-in-time: Use p_f = 0.2 (smaller fires)
     """
     
     def __init__(self, G: nx.Graph, random_state: Optional[int] = None,
                  forward_prob: float = FF_FORWARD_PROB_SCALEDOWN,
                  backward_prob: float = FF_BACKWARD_PROB):
-        """
-        Initialize Forest Fire sampler.
-        
-        Args:
-            G: Original graph
-            random_state: Random seed
-            forward_prob: Forward burning probability (p_f)
-            backward_prob: Backward burning probability (p_b)
-        """
         super().__init__(G, random_state)
         self.forward_prob = forward_prob
         self.backward_prob = backward_prob
     
-    def _burn_neighbors(self, node: int, visited: Set[int], 
-                        queue: deque, prob: float, 
-                        get_neighbors_func) -> None:
+    def _geometric_sample(self, p: float) -> int:
         """
-        Burn edges from a node.
-        
-        Args:
-            node: Current burning node
-            visited: Set of already visited nodes
-            queue: Queue of nodes to process
-            prob: Burning probability
-            get_neighbors_func: Function to get neighbors
+        Sample from geometric distribution with parameter p.
+        Returns number of nodes to burn (mean = p/(1-p)).
         """
-        neighbors = get_neighbors_func(node)
+        if p <= 0:
+            return 0
+        if p >= 1:
+            return 1000  # Large number
         
-        if not neighbors:
-            return
-        
-        # Number of edges to burn (geometric distribution)
-        if prob > 0:
-            n_burn = np.random.geometric(1 - prob)
-        else:
-            n_burn = 0
-        
-        n_burn = min(n_burn, len(neighbors))
-        
-        if n_burn > 0:
-            # Randomly select neighbors to burn
-            burned = np.random.choice(neighbors, size=n_burn, replace=False)
-            
-            for neighbor in burned:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
+        # Geometric distribution: number of failures before first success
+        return np.random.geometric(1 - p)
     
     def sample(self, n_samples: int) -> nx.Graph:
-        """
-        Perform forest fire sampling.
-        
-        Args:
-            n_samples: Number of nodes to sample
-        
-        Returns:
-            Induced subgraph on sampled nodes
-        """
+        """Sample n nodes via forest fire exploration."""
         n_samples = min(n_samples, self.n_nodes)
+        
         sampled_nodes = set()
+        burning_queue = []
         
-        while len(sampled_nodes) < n_samples:
-            # Pick a random seed node
-            seed = np.random.choice(self.nodes)
-            
-            if seed in sampled_nodes:
-                continue
-            
-            sampled_nodes.add(seed)
-            queue = deque([seed])
-            
-            while queue and len(sampled_nodes) < n_samples:
-                current = queue.popleft()
-                
-                # Forward burning (out-edges)
-                if self.G.is_directed():
-                    self._burn_neighbors(current, sampled_nodes, queue,
-                                        self.forward_prob, 
-                                        lambda n: list(self.G.successors(n)))
-                    
-                    # Backward burning (in-edges)
-                    if self.backward_prob > 0:
-                        self._burn_neighbors(current, sampled_nodes, queue,
-                                            self.backward_prob,
-                                            lambda n: list(self.G.predecessors(n)))
-                else:
-                    # Undirected graph
-                    self._burn_neighbors(current, sampled_nodes, queue,
-                                        self.forward_prob,
-                                        lambda n: list(self.G.neighbors(n)))
+        # Start from random node
+        start_node = np.random.choice(self.nodes)
+        sampled_nodes.add(start_node)
+        burning_queue.append(start_node)
         
-        # Trim to exact size
-        sampled_list = list(sampled_nodes)[:n_samples]
-        return self.create_subgraph(set(sampled_list))
+        while len(sampled_nodes) < n_samples and burning_queue:
+            # Get next node to process
+            current = burning_queue.pop(0)
+            
+            # Get neighbors to potentially burn
+            if self.G.is_directed():
+                out_neighbors = list(self.G.successors(current))
+                in_neighbors = list(self.G.predecessors(current))
+            else:
+                out_neighbors = list(self.G.neighbors(current))
+                in_neighbors = []
+            
+            # Filter out already sampled nodes
+            out_neighbors = [n for n in out_neighbors if n not in sampled_nodes]
+            in_neighbors = [n for n in in_neighbors if n not in sampled_nodes]
+            
+            # Determine how many to burn (geometric distribution)
+            n_forward = min(self._geometric_sample(self.forward_prob), len(out_neighbors))
+            n_backward = min(self._geometric_sample(self.backward_prob), len(in_neighbors))
+            
+            # Randomly select neighbors to burn
+            if out_neighbors and n_forward > 0:
+                burned_forward = np.random.choice(
+                    out_neighbors, 
+                    size=min(n_forward, len(out_neighbors)), 
+                    replace=False
+                )
+                for node in burned_forward:
+                    if len(sampled_nodes) >= n_samples:
+                        break
+                    sampled_nodes.add(node)
+                    burning_queue.append(node)
+            
+            if in_neighbors and n_backward > 0:
+                burned_backward = np.random.choice(
+                    in_neighbors,
+                    size=min(n_backward, len(in_neighbors)),
+                    replace=False
+                )
+                for node in burned_backward:
+                    if len(sampled_nodes) >= n_samples:
+                        break
+                    sampled_nodes.add(node)
+                    burning_queue.append(node)
+            
+            # If queue is empty but we need more nodes, restart from new random node
+            if not burning_queue and len(sampled_nodes) < n_samples:
+                remaining = [n for n in self.nodes if n not in sampled_nodes]
+                if remaining:
+                    new_start = np.random.choice(remaining)
+                    sampled_nodes.add(new_start)
+                    burning_queue.append(new_start)
+        
+        return self._get_induced_subgraph(sampled_nodes)
 
 
 # =============================================================================
-# Hybrid Sampling Methods
+# Hybrid Sampler
 # =============================================================================
 
 class HybridSampler(GraphSampler):
     """
-    Hybrid Sampling Method.
+    Hybrid Sampling: Combines node selection with exploration.
     
-    Combines node selection methods with exploration methods:
-    1. First, select alpha*n seed nodes using a node selection method
-    2. Then, explore from these seeds using an exploration method
+    Our contribution: Systematically evaluate combinations of:
+    - Node selection: RN, RPN, RDN
+    - Exploration: RW, FF
     
-    This aims to combine the global coverage of node selection with
-    the local structure preservation of exploration methods.
-    
-    FIXED: Now properly accepts forward_prob parameter for FF exploration.
+    Alpha parameter controls the mix:
+    - Sample (α * n) nodes using node selection method
+    - Sample ((1-α) * n) nodes using exploration method
     """
     
     def __init__(self, G: nx.Graph, random_state: Optional[int] = None,
-                 node_method: str = "RN", explore_method: str = "RW",
-                 alpha: float = 0.5, forward_prob: float = FF_FORWARD_PROB_SCALEDOWN):
+                 node_method: str = "RN",
+                 explore_method: str = "RW",
+                 alpha: float = 0.5,
+                 **kwargs):
         """
         Initialize hybrid sampler.
         
         Args:
-            G: Original graph
+            G: Graph to sample from
             random_state: Random seed
             node_method: Node selection method ("RN", "RPN", "RDN")
             explore_method: Exploration method ("RW", "FF")
-            alpha: Fraction of nodes to select via node method (0 to 1)
-            forward_prob: Forward burning probability for FF (FIXED: now properly used)
+            alpha: Fraction from node selection (0 to 1)
+            **kwargs: Additional arguments for exploration method
         """
         super().__init__(G, random_state)
         self.node_method = node_method
         self.explore_method = explore_method
         self.alpha = alpha
-        self.forward_prob = forward_prob  # FIXED: Store forward_prob
+        self.kwargs = kwargs
+        
+        # Create component samplers
+        self._node_sampler = self._create_node_sampler(node_method, random_state)
+        self._explore_sampler = self._create_explore_sampler(explore_method, random_state, **kwargs)
     
-    def _select_seed_nodes(self, n_seeds: int) -> Set[int]:
-        """
-        Select seed nodes using the specified node selection method.
-        
-        Args:
-            n_seeds: Number of seed nodes to select
-        
-        Returns:
-            Set of selected seed nodes
-        """
-        if n_seeds <= 0:
-            return set()
-        
-        n_seeds = min(n_seeds, self.n_nodes)
-        
-        if self.node_method == "RN":
-            # Uniform random selection
-            return set(np.random.choice(self.nodes, size=n_seeds, replace=False))
-        
-        elif self.node_method == "RPN":
-            # PageRank weighted selection
-            nodes = list(self.pagerank.keys())
-            probs = np.array([self.pagerank[n] for n in nodes])
-            probs = probs / probs.sum()
-            return set(np.random.choice(nodes, size=n_seeds, replace=False, p=probs))
-        
-        elif self.node_method == "RDN":
-            # Degree weighted selection
-            nodes = list(self.degrees.keys())
-            probs = np.array([self.degrees[n] for n in nodes], dtype=float)
-            probs = probs + 1e-10
-            probs = probs / probs.sum()
-            return set(np.random.choice(nodes, size=n_seeds, replace=False, p=probs))
-        
+    def _create_node_sampler(self, method: str, random_state: int) -> GraphSampler:
+        """Create node selection sampler."""
+        if method == "RN":
+            return RandomNodeSampler(self.G, random_state)
+        elif method == "RPN":
+            return RandomPageRankNodeSampler(self.G, random_state)
+        elif method == "RDN":
+            return RandomDegreeNodeSampler(self.G, random_state)
         else:
-            raise ValueError(f"Unknown node selection method: {self.node_method}")
+            raise ValueError(f"Unknown node selection method: {method}")
     
-    def _explore_random_walk(self, seed_nodes: Set[int], 
-                              n_samples: int) -> Set[int]:
-        """
-        Explore from seed nodes using random walk.
-        
-        Args:
-            seed_nodes: Starting seed nodes
-            n_samples: Total number of nodes to collect
-        
-        Returns:
-            Set of sampled nodes
-        """
-        sampled_nodes = seed_nodes.copy()
-        seed_list = list(seed_nodes) if seed_nodes else [np.random.choice(self.nodes)]
-        
-        max_steps = RANDOM_WALK_MAX_STEPS_MULTIPLIER * n_samples
-        current_node = np.random.choice(seed_list)
-        
-        steps = 0
-        while len(sampled_nodes) < n_samples and steps < max_steps:
-            steps += 1
-            
-            # With probability c, jump to a seed node
-            if np.random.random() < RANDOM_WALK_RESTART_PROB:
-                current_node = np.random.choice(seed_list)
-            else:
-                neighbors = self.get_neighbors(current_node)
-                if neighbors:
-                    current_node = np.random.choice(neighbors)
-                else:
-                    current_node = np.random.choice(seed_list)
-            
-            sampled_nodes.add(current_node)
-        
-        return sampled_nodes
-    
-    def _explore_forest_fire(self, seed_nodes: Set[int],
-                              n_samples: int) -> Set[int]:
-        """
-        Explore from seed nodes using forest fire.
-        
-        FIXED: Now uses self.forward_prob instead of hardcoded default.
-        
-        Args:
-            seed_nodes: Starting seed nodes
-            n_samples: Total number of nodes to collect
-        
-        Returns:
-            Set of sampled nodes
-        """
-        sampled_nodes = seed_nodes.copy()
-        queue = deque(seed_nodes)
-        
-        # FIXED: Use self.forward_prob instead of hardcoded value
-        forward_prob = self.forward_prob
-        
-        while len(sampled_nodes) < n_samples:
-            if not queue:
-                # All seeds exhausted, pick new random seed
-                remaining = set(self.nodes) - sampled_nodes
-                if not remaining:
-                    break
-                new_seed = np.random.choice(list(remaining))
-                sampled_nodes.add(new_seed)
-                queue.append(new_seed)
-            
-            current = queue.popleft()
-            
-            # Get neighbors
-            if self.G.is_directed():
-                neighbors = list(self.G.successors(current))
-            else:
-                neighbors = list(self.G.neighbors(current))
-            
-            if not neighbors:
-                continue
-            
-            # Burn edges using the correct forward_prob
-            n_burn = np.random.geometric(1 - forward_prob) if forward_prob > 0 else 0
-            n_burn = min(n_burn, len(neighbors))
-            
-            if n_burn > 0:
-                burned = np.random.choice(neighbors, size=n_burn, replace=False)
-                for node in burned:
-                    if node not in sampled_nodes:
-                        sampled_nodes.add(node)
-                        queue.append(node)
-                        
-                        if len(sampled_nodes) >= n_samples:
-                            break
-        
-        return sampled_nodes
+    def _create_explore_sampler(self, method: str, random_state: int, **kwargs) -> GraphSampler:
+        """Create exploration sampler."""
+        if method == "RW":
+            restart_prob = kwargs.get('restart_prob', RANDOM_WALK_RESTART_PROB)
+            return RandomWalkSampler(self.G, random_state, restart_prob=restart_prob)
+        elif method == "FF":
+            forward_prob = kwargs.get('forward_prob', FF_FORWARD_PROB_SCALEDOWN)
+            backward_prob = kwargs.get('backward_prob', FF_BACKWARD_PROB)
+            return ForestFireSampler(self.G, random_state, 
+                                     forward_prob=forward_prob, 
+                                     backward_prob=backward_prob)
+        else:
+            raise ValueError(f"Unknown exploration method: {method}")
     
     def sample(self, n_samples: int) -> nx.Graph:
         """
-        Perform hybrid sampling.
+        Sample using hybrid strategy.
         
-        Args:
-            n_samples: Number of nodes to sample
-        
-        Returns:
-            Induced subgraph on sampled nodes
+        1. Select α*n nodes using node selection method
+        2. Select (1-α)*n nodes using exploration method
+        3. Combine and return induced subgraph
         """
         n_samples = min(n_samples, self.n_nodes)
         
-        # Step 1: Select seed nodes using node selection method
-        n_seeds = int(n_samples * self.alpha)
-        seed_nodes = self._select_seed_nodes(n_seeds)
+        # Calculate split
+        n_node_selection = int(n_samples * self.alpha)
+        n_exploration = n_samples - n_node_selection
         
-        # Step 2: Explore from seeds using exploration method
-        if self.explore_method == "RW":
-            sampled_nodes = self._explore_random_walk(seed_nodes, n_samples)
-        elif self.explore_method == "FF":
-            sampled_nodes = self._explore_forest_fire(seed_nodes, n_samples)
-        else:
-            raise ValueError(f"Unknown exploration method: {self.explore_method}")
+        sampled_nodes = set()
         
-        # Trim to exact size
-        sampled_list = list(sampled_nodes)[:n_samples]
-        return self.create_subgraph(set(sampled_list))
+        # Phase 1: Node selection
+        if n_node_selection > 0:
+            node_sample = self._node_sampler.sample(n_node_selection)
+            sampled_nodes.update(node_sample.nodes())
+        
+        # Phase 2: Exploration (starting from already sampled nodes if possible)
+        if n_exploration > 0:
+            explore_sample = self._explore_sampler.sample(n_exploration)
+            sampled_nodes.update(explore_sample.nodes())
+        
+        # Trim to exact size if needed
+        if len(sampled_nodes) > n_samples:
+            sampled_nodes = set(list(sampled_nodes)[:n_samples])
+        
+        return self._get_induced_subgraph(sampled_nodes)
 
 
 # =============================================================================
 # Factory Functions
 # =============================================================================
 
-def get_sampler(method: str, G: nx.Graph, random_state: Optional[int] = None,
+def get_sampler(G: nx.Graph, method: str, random_state: Optional[int] = None,
                 **kwargs) -> GraphSampler:
     """
-    Factory function to get a sampler by method name.
+    Factory function to create a sampler by name.
     
     Args:
-        method: Method name ("RN", "RPN", "RDN", "RW", "RJ", "FF", or "HYB-X-Y")
         G: Graph to sample from
+        method: Method name (e.g., "RN", "RW", "HYB-RN-RW")
         random_state: Random seed
-        **kwargs: Additional arguments for specific samplers
-            - forward_prob: Forward burning probability for FF methods
-            - alpha: Mixing ratio for hybrid methods
+        **kwargs: Additional arguments for the sampler
     
     Returns:
-        Appropriate sampler instance
+        GraphSampler instance
     """
     method = method.upper()
     
+    # Baseline methods
     if method == "RN":
         return RandomNodeSampler(G, random_state)
     elif method == "RPN":
@@ -675,95 +506,113 @@ def get_sampler(method: str, G: nx.Graph, random_state: Optional[int] = None,
     elif method == "RDN":
         return RandomDegreeNodeSampler(G, random_state)
     elif method == "RW":
-        return RandomWalkSampler(G, random_state)
+        return RandomWalkSampler(G, random_state, **kwargs)
     elif method == "RJ":
-        return RandomJumpSampler(G, random_state)
+        return RandomJumpSampler(G, random_state, **kwargs)
     elif method == "FF":
-        forward_prob = kwargs.get("forward_prob", FF_FORWARD_PROB_SCALEDOWN)
-        return ForestFireSampler(G, random_state, forward_prob=forward_prob)
+        return ForestFireSampler(G, random_state, **kwargs)
+    
+    # Hybrid methods: HYB-X-Y or HYB-X-Y(α=0.5)
     elif method.startswith("HYB-"):
-        # Parse hybrid method name (e.g., "HYB-RN-RW")
-        parts = method.split("-")
-        if len(parts) != 3:
-            raise ValueError(f"Invalid hybrid method format: {method}")
-        node_method = parts[1]
-        explore_method = parts[2]
-        alpha = kwargs.get("alpha", 0.5)
-        # FIXED: Pass forward_prob to HybridSampler
-        forward_prob = kwargs.get("forward_prob", FF_FORWARD_PROB_SCALEDOWN)
-        return HybridSampler(G, random_state, node_method, explore_method, 
-                            alpha, forward_prob=forward_prob)
-    else:
-        raise ValueError(f"Unknown sampling method: {method}")
+        parts = method.replace("HYB-", "").split("-")
+        if len(parts) >= 2:
+            node_method = parts[0]
+            explore_method = parts[1].split("(")[0]  # Remove alpha suffix if present
+            alpha = kwargs.pop('alpha', 0.5)  # 使用 pop 从 kwargs 中移除 alpha
+            return HybridSampler(G, random_state, 
+                                node_method=node_method,
+                                explore_method=explore_method,
+                                alpha=alpha, **kwargs)
+    
+    raise ValueError(f"Unknown sampling method: {method}")
 
 
 def sample_graph(G: nx.Graph, method: str, n_samples: int,
                  random_state: Optional[int] = None, **kwargs) -> nx.Graph:
     """
-    Convenience function to sample a graph with a specified method.
+    Convenience function to sample a graph.
     
     Args:
         G: Graph to sample from
         method: Sampling method name
         n_samples: Number of nodes to sample
         random_state: Random seed
-        **kwargs: Additional arguments for the sampler
+        **kwargs: Additional arguments
     
     Returns:
         Sampled subgraph
     """
-    sampler = get_sampler(method, G, random_state, **kwargs)
+    sampler = get_sampler(G, method, random_state, **kwargs)
     return sampler.sample(n_samples)
 
 
-# =============================================================================
-# Utility Functions
-# =============================================================================
-
-def get_available_methods() -> List[str]:
+def get_all_hybrid_samplers(G: nx.Graph = None, alpha: float = 0.5,
+                             random_state: Optional[int] = None,
+                             **kwargs) -> Dict[str, HybridSampler]:
     """
-    Get list of all available sampling methods.
-    
-    Returns:
-        List of method names
-    """
-    baseline = ["RN", "RPN", "RDN", "RW", "RJ", "FF"]
-    
-    node_methods = ["RN", "RPN", "RDN"]
-    explore_methods = ["RW", "FF"]
-    hybrid = [f"HYB-{n}-{e}" for n in node_methods for e in explore_methods]
-    
-    return baseline + hybrid
-
-
-def describe_method(method: str) -> str:
-    """
-    Get a description of a sampling method.
+    Get dictionary of all hybrid sampler combinations.
     
     Args:
-        method: Method name
+        G: Graph (can be None for just getting names)
+        alpha: Alpha parameter
+        random_state: Random seed
+        **kwargs: Additional arguments
     
     Returns:
-        Description string
+        Dictionary {name: sampler} if G provided, else {name: None}
     """
-    descriptions = {
-        "RN": "Random Node - Uniform random node selection",
-        "RPN": "Random PageRank Node - PageRank-weighted node selection",
-        "RDN": "Random Degree Node - Degree-weighted node selection",
-        "RW": "Random Walk - Walk-based exploration with restart",
-        "RJ": "Random Jump - Random walk with random teleportation",
-        "FF": "Forest Fire - BFS-like burning exploration",
-    }
+    node_methods = ["RN", "RPN", "RDN"]
+    explore_methods = ["RW", "FF"]
     
-    method = method.upper()
+    samplers = {}
+    for node_m in node_methods:
+        for explore_m in explore_methods:
+            name = f"HYB-{node_m}-{explore_m}"
+            if G is not None:
+                samplers[name] = HybridSampler(
+                    G, random_state, 
+                    node_method=node_m, 
+                    explore_method=explore_m,
+                    alpha=alpha, **kwargs
+                )
+            else:
+                samplers[name] = None
     
-    if method in descriptions:
-        return descriptions[method]
-    elif method.startswith("HYB-"):
-        parts = method.split("-")
-        if len(parts) == 3:
-            node_method = parts[1]
-            explore_method = parts[2]
-            return f"Hybrid: {node_method} node selection + {explore_method} exploration"
+    return samplers
+
+
+# =============================================================================
+# Demo
+# =============================================================================
+
+if __name__ == "__main__":
+    print("="*70)
+    print("GRAPH SAMPLING MODULE DEMO")
+    print("="*70)
     
-    return "Unknown method"
+    # Create test graph
+    print("\nCreating test graph (Barabási-Albert, n=500, m=3)...")
+    G = nx.barabasi_albert_graph(500, 3, seed=42)
+    G = G.to_directed()  # Make it directed for full testing
+    
+    n_samples = 50
+    print(f"\nSampling {n_samples} nodes with each method...\n")
+    
+    # Test all baseline methods
+    baseline_methods = ["RN", "RPN", "RDN", "RW", "RJ", "FF"]
+    
+    print("BASELINE METHODS:")
+    print("-" * 50)
+    for method in baseline_methods:
+        S = sample_graph(G, method, n_samples, random_state=42)
+        print(f"  {method:5s}: {S.number_of_nodes():4d} nodes, {S.number_of_edges():5d} edges")
+    
+    # Test hybrid methods
+    print("\nHYBRID METHODS (α=0.5):")
+    print("-" * 50)
+    hybrid_samplers = get_all_hybrid_samplers(G, alpha=0.5, random_state=42)
+    for name, sampler in hybrid_samplers.items():
+        S = sampler.sample(n_samples)
+        print(f"  {name:15s}: {S.number_of_nodes():4d} nodes, {S.number_of_edges():5d} edges")
+    
+    print("\n✓ Sampling module demo completed!")

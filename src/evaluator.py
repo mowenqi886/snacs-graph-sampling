@@ -1,10 +1,11 @@
+
 import numpy as np
 import networkx as nx
 from scipy import sparse
 from scipy.sparse.linalg import svds
 from scipy.stats import ks_2samp
 from typing import Dict, List, Tuple, Optional, Union
-from collections import Counter
+from collections import Counter, defaultdict
 import warnings
 
 import sys
@@ -18,7 +19,7 @@ warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 
 # =============================================================================
-# Log-Transform Utility Functions (CORRECTED IMPLEMENTATION)
+# Log-Transform Utility Functions
 # =============================================================================
 
 def log_transform_distribution(values: np.ndarray) -> np.ndarray:
@@ -26,32 +27,31 @@ def log_transform_distribution(values: np.ndarray) -> np.ndarray:
     Apply log transform to a distribution for KS testing.
     
     For power-law distributions (like degree distributions), comparing in 
-    log-space reduces sensitivity to the tail region, which is the correct
-    approach as described in Leskovec & Faloutsos (2006).
+    log-space reduces sensitivity to the tail region and provides more
+    meaningful comparisons.
     
     Args:
         values: Array of values to transform
     
     Returns:
-        Log-transformed array (values <= 0 are handled)
+        Log-transformed array (values <= 0 are filtered out)
     """
     values = np.asarray(values, dtype=float)
     
-    # Handle zeros and negative values by adding small epsilon
-    # or filtering them out
+    # Filter out non-positive values
     values = values[values > 0]
     
     if len(values) == 0:
         return np.array([0.0])
     
-    return np.log1p(values)  # log(1 + x) to handle small values better
+    return np.log1p(values)  # log(1 + x) to handle small values
 
 
 def compute_ks_with_log_transform(dist1: np.ndarray, dist2: np.ndarray) -> float:
     """
     Compute KS statistic after log-transforming both distributions.
     
-    This is the CORRECT way to compare power-law distributions,
+    This is the recommended way to compare power-law distributions,
     as it reduces sensitivity to extreme values in the tail.
     
     Args:
@@ -75,7 +75,7 @@ def compute_ks_with_log_transform(dist1: np.ndarray, dist2: np.ndarray) -> float
 
 
 # =============================================================================
-# Graph Property Extraction Functions
+# Graph Property Extraction Functions (S1-S9)
 # =============================================================================
 
 def get_in_degree_distribution(G: nx.Graph) -> np.ndarray:
@@ -152,7 +152,7 @@ def get_scc_size_distribution(G: nx.Graph) -> np.ndarray:
     """
     S4: Extract strongly connected component size distribution.
     
-    For undirected graphs, this is equivalent to S3.
+    For undirected graphs, this is equivalent to S3 (regular connected components).
     
     Args:
         G: NetworkX graph
@@ -176,15 +176,14 @@ def get_hop_plot(G: nx.Graph, num_samples: int = HOP_PLOT_SAMPLES) -> np.ndarray
     """
     S5: Extract hop-plot (number of pairs reachable within h hops).
     
-    Computed on the FULL graph.
-    Due to computational cost, we sample nodes and estimate.
+    Computed on the FULL graph using sampling for efficiency.
     
     Args:
         G: NetworkX graph
         num_samples: Number of source nodes to sample
     
     Returns:
-        Array where index h contains count of pairs reachable in h hops
+        Array where index h contains cumulative count of pairs reachable in ≤h hops
     """
     if G.number_of_nodes() == 0:
         return np.array([0])
@@ -238,7 +237,7 @@ def get_hop_plot_wcc(G: nx.Graph, num_samples: int = HOP_PLOT_SAMPLES) -> np.nda
         num_samples: Number of source nodes to sample
     
     Returns:
-        Array where index h contains count of pairs reachable in h hops
+        Array where index h contains cumulative count of pairs reachable in ≤h hops
         (computed only within the largest WCC)
     """
     if G.number_of_nodes() == 0:
@@ -269,14 +268,15 @@ def get_singular_vector_distribution(G: nx.Graph, k: int = 10) -> np.ndarray:
     """
     S7: Extract first left singular vector distribution.
     
-    Computes the top singular vector of the adjacency matrix.
+    Computes the top singular vector of the adjacency matrix and returns
+    the distribution of its absolute values.
     
     Args:
         G: NetworkX graph
         k: Number of singular values/vectors to compute
     
     Returns:
-        Array of singular vector components (absolute values)
+        Array of singular vector components (absolute values, sorted descending)
     """
     if G.number_of_nodes() < 3:
         return np.array([0])
@@ -298,7 +298,7 @@ def get_singular_vector_distribution(G: nx.Graph, k: int = 10) -> np.ndarray:
         
         return np.sort(first_sv)[::-1]  # Sort descending
         
-    except Exception as e:
+    except Exception:
         return np.array([0])
 
 
@@ -336,21 +336,26 @@ def get_singular_value_distribution(G: nx.Graph,
         
         return singular_values
         
-    except Exception as e:
+    except Exception:
         return np.array([0])
 
 
 def get_clustering_coefficient_distribution(G: nx.Graph) -> np.ndarray:
     """
-    S9: Extract clustering coefficient distribution.
+    S9: Extract clustering coefficient distribution C_d.
     
-    Computes local clustering coefficient for each node.
+    FIXED: This now computes the AVERAGE clustering coefficient for each degree d,
+    as defined in the original paper:
+    
+    "C_d is defined as the average C_v over all nodes v of degree d."
+    
+    This is different from just returning all node clustering coefficients!
     
     Args:
         G: NetworkX graph
     
     Returns:
-        Array of clustering coefficients
+        Array of average clustering coefficients per degree (C_d values)
     """
     if G.number_of_nodes() == 0:
         return np.array([0])
@@ -359,12 +364,31 @@ def get_clustering_coefficient_distribution(G: nx.Graph) -> np.ndarray:
         # For directed graphs, convert to undirected for clustering
         if G.is_directed():
             G_undirected = G.to_undirected()
-            clustering = nx.clustering(G_undirected)
         else:
-            clustering = nx.clustering(G)
+            G_undirected = G
         
-        values = np.array(list(clustering.values()))
-        return values
+        # Get clustering coefficient for each node
+        clustering = nx.clustering(G_undirected)
+        
+        # Get degree for each node
+        degrees = dict(G_undirected.degree())
+        
+        # Group clustering coefficients by degree
+        degree_clustering = defaultdict(list)
+        for node, cc in clustering.items():
+            d = degrees[node]
+            degree_clustering[d].append(cc)
+        
+        # Compute average clustering coefficient for each degree (C_d)
+        C_d_values = []
+        for d in sorted(degree_clustering.keys()):
+            avg_cc = np.mean(degree_clustering[d])
+            C_d_values.append(avg_cc)
+        
+        if not C_d_values:
+            return np.array([0])
+        
+        return np.array(C_d_values)
         
     except Exception:
         return np.array([0])
@@ -387,7 +411,7 @@ def compute_ks_statistic(dist1: np.ndarray, dist2: np.ndarray,
         dist1: First distribution (original graph)
         dist2: Second distribution (sampled graph)
         use_log_transform: If True, apply log transform before KS test
-                           (recommended for power-law distributions like degrees)
+                           (recommended for power-law distributions)
     
     Returns:
         KS D-statistic (float between 0 and 1)
@@ -430,7 +454,7 @@ def compute_mean_statistics(stats_dict: Dict[str, List[float]]) -> Dict[str, flo
         Dictionary with mean values
     """
     return {
-        prop: np.mean(values) for prop, values in stats_dict.items()
+        prop: float(np.mean(values)) for prop, values in stats_dict.items()
     }
 
 
@@ -445,8 +469,9 @@ class GraphEvaluator:
     Computes all static properties (S1-S9) and their KS statistics.
     
     KEY FEATURES:
-    - S6 (hop-plot on largest WCC) is NOW INCLUDED BY DEFAULT
+    - S6 (hop-plot on largest WCC) is included by default
     - Log-transform is applied to power-law distributions (degree, component sizes)
+    - S9 is correctly computed as C_d (average clustering per degree)
     - All 9 properties are evaluated
     """
     
@@ -547,18 +572,14 @@ class GraphEvaluator:
         """
         Evaluate all properties and return KS statistics.
         
-        NOTE: S6 is NOW INCLUDED BY DEFAULT (include_s6=True)
-        
         Args:
             sampled_graph: The sampled graph to evaluate
             include_s6: Whether to include S6 (hop-plot on largest WCC)
-                        DEFAULT IS NOW TRUE
         
         Returns:
             Dictionary with property names and their KS statistics
         """
-        # All 9 properties (S1-S9)
-        # Note: S6 is hop_plot_wcc, S5 is hop_plot
+        # Properties S1-S5
         properties = [
             "in_degree",     # S1
             "out_degree",    # S2
@@ -567,11 +588,11 @@ class GraphEvaluator:
             "hop_plot",      # S5
         ]
         
-        # S6: hop-plot on largest WCC (NOW INCLUDED BY DEFAULT)
+        # S6: hop-plot on largest WCC (included by default)
         if include_s6:
             properties.append("hop_plot_wcc")  # S6
         
-        # Continue with S7-S9
+        # S7-S9
         properties.extend([
             "singular_vec",  # S7
             "singular_val",  # S8
@@ -583,23 +604,9 @@ class GraphEvaluator:
             results[prop] = self.evaluate_property(sampled_graph, prop)
         
         # Compute average
-        results["AVG"] = np.mean(list(results.values()))
+        results["AVG"] = float(np.mean(list(results.values())))
         
         return results
-    
-    def evaluate_all_no_s6(self, sampled_graph: nx.Graph) -> Dict[str, float]:
-        """
-        Evaluate all properties EXCEPT S6 (for backward compatibility).
-        
-        Use this if you want to match the original 8-property evaluation.
-        
-        Args:
-            sampled_graph: The sampled graph to evaluate
-        
-        Returns:
-            Dictionary with property names and their KS statistics (8 properties + AVG)
-        """
-        return self.evaluate_all(sampled_graph, include_s6=False)
     
     def get_property_names(self, include_s6: bool = True) -> List[str]:
         """
@@ -632,7 +639,7 @@ def evaluate_sample(original_graph: nx.Graph, sampled_graph: nx.Graph,
         original_graph: The original graph
         sampled_graph: The sampled graph
         use_log_transform: Whether to use log-transform for power-law distributions
-        include_s6: Whether to include S6 (NOW TRUE BY DEFAULT)
+        include_s6: Whether to include S6
     
     Returns:
         Dictionary with KS statistics for all properties
@@ -675,15 +682,15 @@ def print_evaluation_results(results: Dict[str, Dict[str, float]],
         results: Dictionary with method names and their evaluation results
         sort_by: Property to sort by (default: AVG)
     """
+    if not results:
+        print("No results to display")
+        return
+    
     # Sort methods by the specified property
     sorted_methods = sorted(results.keys(), 
                             key=lambda m: results[m].get(sort_by, 1.0))
     
     # Get property names from first result
-    if not results:
-        print("No results to display")
-        return
-    
     first_result = list(results.values())[0]
     properties = [p for p in first_result.keys() if p != "AVG"] + ["AVG"]
     
@@ -702,10 +709,6 @@ def print_evaluation_results(results: Dict[str, Dict[str, float]],
             row += f"{value:<12.4f}"
         print(row)
 
-
-# =============================================================================
-# Summary Statistics
-# =============================================================================
 
 def get_summary_statistics(results: Dict[str, Dict[str, float]]) -> Dict[str, any]:
     """

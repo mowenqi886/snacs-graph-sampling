@@ -1,0 +1,30 @@
+{
+  "datasets": [
+    "cit-HepTh"
+  ],
+  "sampling_ratios": [
+    0.15
+  ],
+  "num_runs": 3,
+  "baseline_methods": [
+    "RN",
+    "RW",
+    "FF"
+  ],
+  "hybrid_combinations": [
+    [
+      "RN",
+      "RW"
+    ],
+    [
+      "RPN",
+      "FF"
+    ]
+  ],
+  "alpha_values": [
+    0.5
+  ],
+  "sampling_goal": "scale_down",
+  "include_s6": true,
+  "random_seed": 42
+}
