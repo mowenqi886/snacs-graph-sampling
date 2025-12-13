@@ -148,6 +148,7 @@ def get_wcc_size_distribution(G: nx.Graph) -> np.ndarray:
     return sizes
 
 
+
 def get_scc_size_distribution(G: nx.Graph) -> np.ndarray:
     """
     S4: Extract strongly connected component size distribution.
@@ -218,9 +219,23 @@ def get_hop_plot(G: nx.Graph, num_samples: int = HOP_PLOT_SAMPLES) -> np.ndarray
         if d <= max_dist:
             hop_counts[d] += 1
     
+
+    #ORIGINAL
+    # # Cumulative sum
+    # cumulative = np.cumsum(hop_counts)
+    # return cumulative
+
+
+
+    # MAURITS EDIT
     # Cumulative sum
     cumulative = np.cumsum(hop_counts)
-    
+
+    # Normalize to [0,1] so it represents "fraction of reachable pairs"
+    total_pairs = cumulative[-1]
+    if total_pairs > 0:
+        cumulative = cumulative / float(total_pairs)
+
     return cumulative
 
 
@@ -333,7 +348,13 @@ def get_singular_value_distribution(G: nx.Graph,
         
         # Sort singular values in descending order
         singular_values = np.sort(s)[::-1]
-        
+
+
+        #MAURITS EDIT
+        # Normalize by the largest singular value to compare shapes
+        if singular_values[0] > 0:
+            singular_values = singular_values / float(singular_values[0])
+
         return singular_values
         
     except Exception:

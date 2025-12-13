@@ -70,34 +70,6 @@ DATASETS = {
 
 
 # =============================================================================
-# Temporal Dataset Configuration (With Timestamps for Back-in-Time)
-# =============================================================================
-# These datasets have node timestamps, enabling TRUE back-in-time evaluation
-# where we can compare samples against actual historical snapshots.
-
-TEMPORAL_DATASETS = {
-    "cit-HepTh": {
-        "edges_url": "https://snap.stanford.edu/data/cit-HepTh.txt.gz",
-        "dates_url": "https://snap.stanford.edu/data/cit-HepTh-dates.txt.gz",
-        "edges_file": "cit-HepTh.txt.gz",
-        "dates_file": "cit-HepTh-dates.txt.gz",
-        "directed": True,
-        "description": "ArXiv HEP-TH citation network with timestamps (1993-2003)",
-        "time_range": "January 1993 - April 2003 (124 months)",
-    },
-    "cit-HepPh": {
-        "edges_url": "https://snap.stanford.edu/data/cit-HepPh.txt.gz",
-        "dates_url": "https://snap.stanford.edu/data/cit-HepPh-dates.txt.gz",
-        "edges_file": "cit-HepPh.txt.gz",
-        "dates_file": "cit-HepPh-dates.txt.gz",
-        "directed": True,
-        "description": "ArXiv HEP-PH citation network with timestamps (1993-2003)",
-        "time_range": "January 1993 - April 2003 (124 months)",
-    },
-}
-
-
-# =============================================================================
 # Sampling Configuration
 # =============================================================================
 
@@ -105,7 +77,7 @@ TEMPORAL_DATASETS = {
 SAMPLING_RATIOS = [0.10, 0.15, 0.20]
 
 # Number of independent runs per configuration (for statistical stability)
-NUM_RUNS = 10
+NUM_RUNS = 3
 
 # Random seed for reproducibility
 RANDOM_SEED = 42
@@ -188,10 +160,10 @@ FF_BACKWARD_PROB = 0.0           # p_b = 0 (no backward burning, as in original 
 
 # Number of source nodes for hop-plot estimation (S5, S6)
 # Higher values = more accurate but slower
-HOP_PLOT_SAMPLES = 500
+HOP_PLOT_SAMPLES = 300
 
 # Number of singular values to compute (S7, S8)
-NUM_SINGULAR_VALUES = 50
+NUM_SINGULAR_VALUES = 30
 
 # Whether to include S6 (hop-plot on largest WCC) by default
 # S6 is important for comparing connectivity structure
