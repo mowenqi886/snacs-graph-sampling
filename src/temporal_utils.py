@@ -11,7 +11,7 @@ import urllib.request
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import DATA_DIR, NUM_TIME_SNAPSHOTS, TIME_SNAPSHOT_METHOD
+from config import DATA_DIR, NUM_TIME_SNAPSHOTS, TIME_SNAPSHOT_METHOD, HYBRID_ALPHA_VALUES
 
 
 # =============================================================================
@@ -626,26 +626,49 @@ def run_back_in_time_experiment(dataset_name: str = "cit-HepTh",
     # Create evaluator
     evaluator = BackInTimeEvaluator(time_snapshots)
     
-    # Run experiments
     results = {}
     
     for method in methods:
         print(f"\n  Testing {method}...")
         
-        kwargs = {}
-        if "FF" in method:
-            kwargs["forward_prob"] = FF_FORWARD_PROB_BACKTIME  # 0.2 for back-in-time
-        if method.startswith("HYB-"):
-            kwargs["alpha"] = 0.5
+        # Baseline methods (no alpha)
+        if not method.startswith("HYB-"):
+            kwargs = {}
+            if "FF" in method:
+                kwargs["forward_prob"] = FF_FORWARD_PROB_BACKTIME  # 0.2 for back-in-time
+            
+            method_results = evaluator.evaluate_method(
+                G_final, method, sampling_ratio, 
+                num_runs=num_runs, 
+                include_temporal=include_temporal,
+                **kwargs
+            )
+            
+            # For convenience, record that this has no alpha
+            method_results["alpha"] = None
+            results[method] = method_results
         
-        method_results = evaluator.evaluate_method(
-            G_final, method, sampling_ratio, 
-            num_runs=num_runs, 
-            include_temporal=include_temporal,
-            **kwargs
-        )
-        
-        results[method] = method_results
+        # Hybrid methods: run once per alpha value
+        else:
+            for alpha in HYBRID_ALPHA_VALUES:
+                # Method label for output (includes alpha but sampler ignores it)
+                method_label = f"{method}(alpha={alpha})"
+                
+                kwargs = {}
+                if "FF" in method:
+                    kwargs["forward_prob"] = FF_FORWARD_PROB_BACKTIME
+                kwargs["alpha"] = alpha  # this is what HybridSampler actually uses
+                
+                method_results = evaluator.evaluate_method(
+                    G_final, method, sampling_ratio,
+                    num_runs=num_runs,
+                    include_temporal=include_temporal,
+                    **kwargs
+                )
+                
+                # Store alpha explicitly so it becomes a column in the CSV
+                method_results["alpha"] = alpha
+                results[method_label] = method_results
         
         # Print summary
         s_avg = method_results.get("S_AVG_ALL", 0)

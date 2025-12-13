@@ -156,8 +156,10 @@ def run_temporal_experiment(args):
     )
     
     # Define methods to test
-    methods = ["RN", "RPN", "RDN", "RW", "FF", 
-               "HYB-RN-RW", "HYB-RN-FF", "HYB-RPN-FF"]
+    methods = BASELINE_METHODS + [
+        f"HYB-{node_m}-{explore_m}" 
+        for (node_m, explore_m) in HYBRID_COMBINATIONS
+    ]
     
     include_temporal = not args.no_temporal_metrics
     
@@ -203,7 +205,6 @@ def run_temporal_experiment(args):
             row = {
                 'dataset': dataset,
                 'method': method,
-                'ratio': args.ratio,
                 'experiment_type': 'back_in_time',
             }
             row.update(metrics)
@@ -305,7 +306,6 @@ def run_fullall_experiment(args):
             row = {
                 'dataset': dataset,
                 'method': method,
-                'ratio': args.ratio,
                 'experiment_type': 'back_in_time',
             }
             row.update(metrics)

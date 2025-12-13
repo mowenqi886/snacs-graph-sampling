@@ -123,7 +123,6 @@ BASELINE_METHODS = [
     "RPN",  # Random PageRank Node sampling - PageRank-weighted selection
     "RDN",  # Random Degree Node sampling - degree-weighted selection
     "RW",   # Random Walk sampling - walk-based exploration with restart
-    "RJ",   # Random Jump - random walk with random teleportation
     "FF"    # Forest Fire sampling - BFS-like burning exploration
 ]
 
