@@ -68,6 +68,36 @@ DATASETS = {
     },
 }
 
+# =============================================================================
+# Temporal Dataset Configuration (With Timestamps for Back-in-Time)
+# =============================================================================
+# These datasets have node timestamps, enabling TRUE back-in-time evaluation
+# where we can compare samples against actual historical snapshots.
+
+TEMPORAL_DATASETS = {
+    "cit-HepTh": {
+        "edges_url": "https://snap.stanford.edu/data/cit-HepTh.txt.gz",
+        "dates_url": "https://snap.stanford.edu/data/cit-HepTh-dates.txt.gz",
+        "edges_file": "cit-HepTh.txt.gz",
+        "dates_file": "cit-HepTh-dates.txt.gz",
+        "directed": True,
+        "description": "ArXiv HEP-TH citation network with timestamps (1993–2003)",
+        "time_range": "January 1993 – April 2003 (124 months)",
+        "description": "ArXiv HEP-TH citation network with timestamps (1993-2003)",
+        "time_range": "January 1993 - April 2003 (124 months)",
+    },
+    "cit-HepPh": {
+        "edges_url": "https://snap.stanford.edu/data/cit-HepPh.txt.gz",
+        "dates_url": "https://snap.stanford.edu/data/cit-HepPh-dates.txt.gz",
+        "edges_file": "cit-HepPh.txt.gz",
+        "dates_file": "cit-HepPh-dates.txt.gz",
+        "directed": True,
+        "description": "ArXiv HEP-PH citation network with timestamps (1993–2003)",
+        "time_range": "January 1993 – April 2003 (124 months)",
+        "description": "ArXiv HEP-PH citation network with timestamps (1993-2003)",
+        "time_range": "January 1993 - April 2003 (124 months)",
+    },
+}
 
 # =============================================================================
 # Sampling Configuration
