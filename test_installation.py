@@ -270,13 +270,13 @@ def main():
     # Test imports
     if not test_imports():
         all_passed = False
-        print("\n⚠️  Some dependencies are missing. Run: pip install -r requirements.txt")
+        print("\n  Some dependencies are missing. Run: pip install -r requirements.txt")
         return
     
     # Test project modules
     if not test_project_modules():
         all_passed = False
-        print("\n⚠️  Some project modules failed to import.")
+        print("\n  Some project modules failed to import.")
         return
     
     # Test samplers
