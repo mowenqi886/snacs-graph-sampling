@@ -19,7 +19,7 @@ def print_header(title: str):
 
 def print_result(test_name: str, passed: bool, details: str = ""):
     """Print test result."""
-    status = "✅ PASS" if passed else "❌ FAIL"
+    status = "PASS" if passed else "FAIL"
     print(f"  {status}: {test_name}")
     if details:
         print(f"         {details}")
@@ -413,7 +413,7 @@ def main():
         print("\n⚡ Running quick tests only...")
         total_passed, total_failed = run_quick_tests()
     else:
-        print("\n🔬 Running all tests...")
+        print("\n Running all tests...")
         total_passed, total_failed = run_all_tests()
     
     elapsed = time.time() - start_time
@@ -422,15 +422,15 @@ def main():
     print("\n" + "="*70)
     print(" TEST SUMMARY")
     print("="*70)
-    print(f"\n  ✅ Passed: {total_passed}")
-    print(f"  ❌ Failed: {total_failed}")
-    print(f"  📊 Total:  {total_passed + total_failed}")
-    print(f"  ⏱️  Time:   {elapsed:.2f} seconds")
+    print(f"\n  Passed: {total_passed}")
+    print(f"  Failed: {total_failed}")
+    print(f"  Total:  {total_passed + total_failed}")
+    print(f"  Time:   {elapsed:.2f} seconds")
     
     if total_failed == 0:
-        print("\n  🎉 All tests passed!")
+        print("\n  All tests passed!")
     else:
-        print(f"\n  ⚠️  {total_failed} test(s) failed")
+        print(f"\n  {total_failed} test(s) failed")
     
     print("="*70 + "\n")
     
