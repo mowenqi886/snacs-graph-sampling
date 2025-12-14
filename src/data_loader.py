@@ -13,12 +13,11 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # =============================================================================
-# Dataset Configuration - 与 config.py 保持一致
+# Dataset Configuration 
 # =============================================================================
 try:
     from config import DATA_DIR, DATASETS, TEMPORAL_DATASETS
 except ImportError:
-    # 备用配置（如果直接运行此模块）
     DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
     
     DATASETS = {
