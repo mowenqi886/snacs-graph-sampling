@@ -14,7 +14,7 @@ from typing import List, Dict, Tuple
 
 DATASETS = {
     # =========================================================================
-    # TEMPORAL DATASETS (有时间戳) - 用于 Back-in-Time
+    # TEMPORAL DATASETS  - 用于 Back-in-Time
     # =========================================================================
     "cit-HepTh": {
         "description": "ArXiv HEP-TH citation network (edges + dates)",
@@ -47,7 +47,7 @@ DATASETS = {
         ],
     },
     # =========================================================================
-    # STATIC DATASETS (无时间戳) - 只用于 Scale-Down
+    # STATIC DATASETS - 只用于 Scale-Down
     # =========================================================================
     "soc-Epinions1": {
         "description": "Epinions who-trusts-whom network (static)",
@@ -185,7 +185,7 @@ def download_dataset(name: str) -> bool:
     
     info = DATASETS[name]
     print(f"\n{'='*60}")
-    print(f"📦 Downloading {name}")
+    print(f" Downloading {name}")
     print(f"   {info['description']}")
     print(f"{'='*60}")
     
@@ -231,7 +231,7 @@ def download_all() -> Tuple[int, int]:
         Tuple of (success_count, failed_count)
     """
     print("\n" + "="*60)
-    print("📥 DOWNLOADING ALL DATASETS")
+    print(" DOWNLOADING ALL DATASETS")
     print("="*60)
     
     success = 0
@@ -255,7 +255,7 @@ def download_all() -> Tuple[int, int]:
 def list_datasets() -> None:
     """Print information about available datasets."""
     print("\n" + "="*60)
-    print("📋 AVAILABLE DATASETS")
+    print(" AVAILABLE DATASETS")
     print("="*60)
     
     for name, info in DATASETS.items():
@@ -277,7 +277,7 @@ def check_datasets() -> Dict[str, bool]:
         Dictionary {dataset_name: is_downloaded}
     """
     print("\n" + "="*60)
-    print("🔍 CHECKING DOWNLOADED DATASETS")
+    print(" CHECKING DOWNLOADED DATASETS")
     print("="*60)
     
     status = {}
@@ -326,7 +326,7 @@ def show_dataset_stats(name: str) -> None:
         print(f"Dataset {name} not downloaded")
         return
     
-    print(f"\n📊 Statistics for {name}:")
+    print(f"\n Statistics for {name}:")
     
     # Count nodes and edges
     nodes = set()
