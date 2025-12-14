@@ -22,7 +22,7 @@ sns.set_palette("husl")
 
 
 # =============================================================================
-# D-Statistic Curves (Similar to Figure 3 in original paper)
+# D-Statistic Curves 
 # =============================================================================
 
 def plot_d_statistic_vs_ratio(results_df: pd.DataFrame,
@@ -133,7 +133,7 @@ def plot_d_statistic_vs_ratio(results_df: pd.DataFrame,
 
 
 # =============================================================================
-# Property Heatmap (Similar to Table 1 in original paper)
+# Property Heatmap 
 # =============================================================================
 
 def plot_property_heatmap(results_df: pd.DataFrame,
