@@ -28,12 +28,12 @@ This repository contains our course project for Social Network Analysis. We repr
 
 
 
-
+---
 ## Environment Setup
 
 ```bash
 python -m venv venv
-source venv/bin/activate        # On Windows: venv\Scripts\activate
+source venv/bin/activate       
 pip install -r requirements.txt
 ```
 ---
@@ -68,14 +68,14 @@ python main.py --full
 ```
 
 ### Back-in-Time experiment
-Constructs a sequence of historical snapshots (default: 5 snapshots) and evaluates static + temporal metrics.
+Constructs a sequence of historical snapshots and evaluates static + temporal metrics.
 ```bash
 python main.py --temporal
 ```
 
 ---
 ### Results
-Output tables are stored under `results/`, typically as CSV files.  
+Output tables are stored under `results/`.  
 
 ---
 ### Figures
