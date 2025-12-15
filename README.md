@@ -5,21 +5,25 @@ This repository contains our course project for Social Network Analysis. We repr
 ---
 ## Project Structure
 
+## Project Structure
+
+```text
+.
 ├── data/                 # downloaded / processed datasets
 ├── results/              # experiment outputs (csv tables)
 ├── figures/              # generated plots
 ├── src/
 │   ├── data_loader.py    # load SNAP datasets
 │   ├── samplers.py       # baseline + hybrid sampling implementations
-│   ├── evaluator.py      # compute S1–S9 and KS D-statistics
-│   ├── temporal_metrics.py  # compute T1–T5 for temporal sequences
+│   ├── evaluator.py      # compute S1-S9 and KS D-statistics
+│   ├── temporal_metrics.py  # compute T1-T5 for temporal sequences
 │   ├── temporal_utils.py    # snapshot construction, temporal pipeline utils
 │   ├── visualizer.py     # plot/table generation 
 │   ├── experiment.py     # experiment runners (SD + BiT)
 │   └── utils.py          # shared utilities
-├── config.py             # global settings (paths, ratios, alpha list, seeds, etc.)
+├── config.py             # global settings
 ├── download_data.py      # dataset download script
-├── main.py               # CLI entrypoint (quick/full/temporal)
+├── main.py               # CLI entrypoint
 ├── requirements.txt
 └── README.md
 
