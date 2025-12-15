@@ -28,6 +28,7 @@ This repository contains our course project for Social Network Analysis. We repr
 
 
 
+
 ---
 ## Environment Setup
 
@@ -36,6 +37,7 @@ python -m venv venv
 source venv/bin/activate       
 pip install -r requirements.txt
 ```
+
 ---
 
 ## Data
