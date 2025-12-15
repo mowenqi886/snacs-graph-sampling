@@ -8,8 +8,8 @@ This repository contains our course project for Social Network Analysis. We repr
 
 ```text
 .
-├── data/                 # downloaded / processed datasets
-├── results/              # experiment outputs (csv tables)
+├── data/                 # downloaded datasets
+├── results/              # experiment outputs 
 ├── figures/              # generated plots
 ├── src/
 │   ├── data_loader.py    # load SNAP datasets
