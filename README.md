@@ -26,7 +26,7 @@ This repository contains our course project for Social Network Analysis. We repr
 ├── requirements.txt
 └── README.md
 
-
+```
 
 
 ---
