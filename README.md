@@ -5,7 +5,6 @@ This repository contains our course project for Social Network Analysis. We repr
 ---
 ## Project Structure
 
-## Project Structure
 
 ```text
 .
