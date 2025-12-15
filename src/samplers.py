@@ -517,8 +517,8 @@ def get_sampler(G: nx.Graph, method: str, random_state: Optional[int] = None,
         parts = method.replace("HYB-", "").split("-")
         if len(parts) >= 2:
             node_method = parts[0]
-            explore_method = parts[1].split("(")[0]  # Remove alpha suffix if present
-            alpha = kwargs.pop('alpha', 0.5)  # 使用 pop 从 kwargs 中移除 alpha
+            explore_method = parts[1].split("(")[0]  
+            alpha = kwargs.pop('alpha', 0.5)  
             return HybridSampler(G, random_state, 
                                 node_method=node_method,
                                 explore_method=explore_method,
